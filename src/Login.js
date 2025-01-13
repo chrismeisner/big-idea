@@ -7,7 +7,9 @@ import {
   signInWithPhoneNumber,
 } from "firebase/auth";
 import { app } from "./firebase";
-import airtableBase from "./airtable";  // <-- important: import your Airtable base
+import airtableBase from "./airtable";
+import PhoneInput from "react-phone-input-2";
+import "react-phone-input-2/lib/style.css";
 
 function Login({ onLogin }) {
   const [mobileNumber, setMobileNumber] = useState("");
@@ -20,7 +22,6 @@ function Login({ onLogin }) {
   const auth = getAuth(app);
 
   useEffect(() => {
-	// Set up invisible reCAPTCHA if not already
 	if (!window.recaptchaVerifier) {
 	  console.log("Initializing reCAPTCHA...");
 	  window.recaptchaVerifier = new RecaptchaVerifier(
@@ -36,21 +37,29 @@ function Login({ onLogin }) {
 	e.preventDefault();
 	setError(null);
 
-	if (!mobileNumber) {
-	  setError("Please enter a valid phone number including country code.");
-	  console.warn("No mobile number entered");
+	// The phone input library returns something like "15550001234" (without the '+').
+	// We'll prepend the "+" ourselves.
+	const normalizedNumber = `+${mobileNumber}`;
+
+	// Since US/CA are both +1, we just check if it starts with +1:
+	if (!normalizedNumber.startsWith("+1")) {
+	  setError("Please enter a valid phone number (US/CA).");
 	  return;
 	}
 
 	try {
 	  setSendingOtp(true);
-	  console.log("Sending OTP to:", mobileNumber);
+	  console.log("Sending OTP to:", normalizedNumber);
 
 	  const appVerifier = window.recaptchaVerifier;
-	  const confirmation = await signInWithPhoneNumber(auth, mobileNumber, appVerifier);
+	  const confirmation = await signInWithPhoneNumber(
+		auth,
+		normalizedNumber,
+		appVerifier
+	  );
 	  setConfirmationResult(confirmation);
 
-	  console.log("OTP sent successfully to:", mobileNumber);
+	  console.log("OTP sent successfully to:", normalizedNumber);
 	} catch (err) {
 	  console.error("Error sending OTP:", err);
 	  setError(err.message || "Failed to send OTP");
@@ -65,7 +74,6 @@ function Login({ onLogin }) {
 
 	if (!otp) {
 	  setError("Please enter the OTP sent to your phone.");
-	  console.warn("No OTP entered");
 	  return;
 	}
 
@@ -79,11 +87,9 @@ function Login({ onLogin }) {
 	  const phoneNumber = result.user.phoneNumber;
 	  console.log("Verified phone number is:", phoneNumber);
 
-	  // Create/fetch Airtable user record for this phoneNumber
 	  const userRecord = await createOrGetAirtableUser(phoneNumber);
 	  console.log("Airtable user record:", userRecord);
 
-	  // Pass the userRecord up to parent (App.js)
 	  onLogin(userRecord);
 	} catch (err) {
 	  console.error("Error verifying OTP:", err);
@@ -93,12 +99,10 @@ function Login({ onLogin }) {
 	}
   };
 
-  // --- Helper to create or fetch a user record ---
   const createOrGetAirtableUser = async (phoneNumber) => {
 	console.log(`createOrGetAirtableUser called with phoneNumber: ${phoneNumber}`);
 
 	try {
-	  console.log("Searching for existing user record in 'Users' table...");
 	  const records = await airtableBase("Users")
 		.select({
 		  filterByFormula: `{Mobile} = "${phoneNumber}"`,
@@ -106,14 +110,9 @@ function Login({ onLogin }) {
 		})
 		.all();
 
-	  console.log("Search results:", records);
-
 	  if (records.length > 0) {
-		console.log("User record found, returning that record...");
 		return records[0];
 	  } else {
-		console.log("No user record found. Creating a new one for phoneNumber:", phoneNumber);
-		// Only write the "Mobile" field; "Username" is a calculated field in Airtable
 		const created = await airtableBase("Users").create([
 		  {
 			fields: {
@@ -121,8 +120,6 @@ function Login({ onLogin }) {
 			},
 		  },
 		]);
-
-		console.log("New user record created:", created[0]);
 		return created[0];
 	  }
 	} catch (error) {
@@ -141,15 +138,19 @@ function Login({ onLogin }) {
 	  {!confirmationResult && (
 		<form onSubmit={handleSendOtp} className="inline-block text-left mt-4">
 		  <label htmlFor="mobileNumber" className="block mb-1 font-medium">
-			Mobile Number (with country code):
+			Mobile Number (US/CA):
 		  </label>
-		  <input
-			type="tel"
-			id="mobileNumber"
-			placeholder="+1 555 000 1234"
+		  <PhoneInput
+			country={"us"}
+			onlyCountries={["us", "ca"]}
+			placeholder="(555) 000-1234"
 			value={mobileNumber}
-			onChange={(e) => setMobileNumber(e.target.value)}
-			className="block w-full max-w-xs border border-gray-300 rounded px-2 py-1 mb-3"
+			onChange={(val) => setMobileNumber(val)}
+			inputProps={{
+			  name: "mobileNumber",
+			  required: true,
+			}}
+			containerStyle={{ marginBottom: "1rem" }}
 		  />
 		  <button
 			type="submit"
@@ -168,11 +169,18 @@ function Login({ onLogin }) {
 			Enter OTP:
 		  </label>
 		  <input
-			type="text"
+			type="tel"
 			id="otp"
 			placeholder="123456"
 			value={otp}
-			onChange={(e) => setOtp(e.target.value)}
+			onChange={(e) => {
+			  // Remove any non-digit characters and limit to 6 digits
+			  const cleaned = e.target.value.replace(/\D/g, "");
+			  setOtp(cleaned.slice(0, 6));
+			}}
+			pattern="[0-9]*"
+			inputMode="numeric"
+			maxLength={6}
 			className="block w-full max-w-xs border border-gray-300 rounded px-2 py-1 mb-3"
 		  />
 		  <button

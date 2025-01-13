@@ -7,10 +7,9 @@ function Header({ isLoggedIn, onLogout, airtableUser }) {
   const handleLogout = async () => {
 	const auth = getAuth();
 	await signOut(auth);
-	onLogout(); 
+	onLogout();
   };
 
-  // If your table has a formula field "Username", it will come back in fields
   let username = "";
   if (airtableUser && airtableUser.fields) {
 	username = airtableUser.fields.Username || "";
