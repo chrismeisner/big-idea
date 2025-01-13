@@ -1,12 +1,14 @@
-// File: big-idea/src/Login.js
-
-import React, { useState, useEffect } from 'react';
-import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
-import { app } from './firebase';
+import React, { useState, useEffect } from "react";
+import {
+  getAuth,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+} from "firebase/auth";
+import { app } from "./firebase";
 
 function Login({ onLogin }) {
-  const [mobileNumber, setMobileNumber] = useState('');
-  const [otp, setOtp] = useState('');
+  const [mobileNumber, setMobileNumber] = useState("");
+  const [otp, setOtp] = useState("");
   const [confirmationResult, setConfirmationResult] = useState(null);
   const [error, setError] = useState(null);
   const [sendingOtp, setSendingOtp] = useState(false);
@@ -18,8 +20,8 @@ function Login({ onLogin }) {
 	// Set up invisible reCAPTCHA if not already
 	if (!window.recaptchaVerifier) {
 	  window.recaptchaVerifier = new RecaptchaVerifier(
-		'recaptcha-container', // The ID of a <div> in your component for the captcha
-		{ size: 'invisible' },
+		"recaptcha-container",
+		{ size: "invisible" },
 		auth
 	  );
 	}
@@ -30,19 +32,23 @@ function Login({ onLogin }) {
 	setError(null);
 
 	if (!mobileNumber) {
-	  setError('Please enter a valid phone number including country code.');
+	  setError("Please enter a valid phone number including country code.");
 	  return;
 	}
 
 	try {
 	  setSendingOtp(true);
 	  const appVerifier = window.recaptchaVerifier;
-	  const confirmation = await signInWithPhoneNumber(auth, mobileNumber, appVerifier);
+	  const confirmation = await signInWithPhoneNumber(
+		auth,
+		mobileNumber,
+		appVerifier
+	  );
 	  setConfirmationResult(confirmation);
-	  console.log('OTP sent to', mobileNumber);
+	  console.log("OTP sent to", mobileNumber);
 	} catch (err) {
-	  console.error('Error sending OTP:', err);
-	  setError(err.message || 'Failed to send OTP');
+	  console.error("Error sending OTP:", err);
+	  setError(err.message || "Failed to send OTP");
 	} finally {
 	  setSendingOtp(false);
 	}
@@ -53,19 +59,19 @@ function Login({ onLogin }) {
 	setError(null);
 
 	if (!otp) {
-	  setError('Please enter the OTP sent to your phone.');
+	  setError("Please enter the OTP sent to your phone.");
 	  return;
 	}
 
 	try {
 	  setVerifying(true);
 	  await confirmationResult.confirm(otp);
-	  // If successful, user is logged in
-	  console.log('Phone number verified!');
+
+	  console.log("Phone number verified!");
 	  onLogin();
 	} catch (err) {
-	  console.error('Error verifying OTP:', err);
-	  setError('Invalid OTP. Please try again.');
+	  console.error("Error verifying OTP:", err);
+	  setError("Invalid OTP. Please try again.");
 	} finally {
 	  setVerifying(false);
 	}
@@ -96,7 +102,7 @@ function Login({ onLogin }) {
 			disabled={sendingOtp}
 			className="py-1 px-3 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50"
 		  >
-			{sendingOtp ? 'Sending...' : 'Send OTP'}
+			{sendingOtp ? "Sending..." : "Send OTP"}
 		  </button>
 		</form>
 	  )}
@@ -120,7 +126,7 @@ function Login({ onLogin }) {
 			disabled={verifying}
 			className="py-1 px-3 bg-green-600 text-white rounded hover:bg-green-700 transition-colors disabled:opacity-50"
 		  >
-			{verifying ? 'Verifying...' : 'Verify OTP'}
+			{verifying ? "Verifying..." : "Verify OTP"}
 		  </button>
 		</form>
 	  )}

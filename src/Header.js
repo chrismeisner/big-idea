@@ -1,8 +1,13 @@
-// File: big-idea/src/Header.js
-
-import React from 'react';
+import React from "react";
+import { getAuth, signOut } from "firebase/auth";
 
 function Header({ isLoggedIn, onLogout }) {
+  const handleLogout = async () => {
+	const auth = getAuth();
+	await signOut(auth);
+	onLogout();
+  };
+
   return (
 	<header className="flex justify-between items-center p-4 bg-gray-100">
 	  <h1 className="text-xl font-bold">Big Idea</h1>
@@ -11,7 +16,7 @@ function Header({ isLoggedIn, onLogout }) {
 		  <>
 			<strong className="text-green-600 mr-4">Logged In</strong>
 			<button
-			  onClick={onLogout}
+			  onClick={handleLogout}
 			  className="py-1 px-3 bg-red-500 text-white rounded hover:bg-red-600 transition-colors"
 			>
 			  Log Out
