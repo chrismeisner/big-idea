@@ -1,0 +1,13 @@
+/* File: big-idea/src/index.css */
+
+/* Tailwind directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Your custom styles (optional)
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+*/
