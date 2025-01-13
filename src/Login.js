@@ -1,13 +1,8 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/Login.js
-
 import React, { useState, useEffect } from "react";
 import {
   getAuth,
   RecaptchaVerifier,
   signInWithPhoneNumber,
-  signInWithPopup,
-  GoogleAuthProvider,
-  OAuthProvider, // For Apple
 } from "firebase/auth";
 import { app } from "./firebase";
 
@@ -19,11 +14,10 @@ function Login({ onLogin }) {
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
-  // Initialize the Firebase Auth instance
   const auth = getAuth(app);
 
   useEffect(() => {
-	// Set up an invisible reCAPTCHA for phone auth if not already set
+	// Set up invisible reCAPTCHA if not already
 	if (!window.recaptchaVerifier) {
 	  window.recaptchaVerifier = new RecaptchaVerifier(
 		"recaptcha-container",
@@ -33,41 +27,6 @@ function Login({ onLogin }) {
 	}
   }, [auth]);
 
-  // ---------------------
-  //  GOOGLE LOGIN
-  // ---------------------
-  const handleGoogleLogin = async () => {
-	try {
-	  const provider = new GoogleAuthProvider();
-	  const result = await signInWithPopup(auth, provider);
-	  // result.user contains user info
-	  console.log("Google sign-in successful", result.user);
-	  onLogin(); // callback to let App.js know we're logged in
-	} catch (error) {
-	  console.error("Error with Google sign-in:", error);
-	  setError(error.message || "Failed to sign in with Google");
-	}
-  };
-
-  // ---------------------
-  //  APPLE LOGIN
-  // ---------------------
-  const handleAppleLogin = async () => {
-	try {
-	  const provider = new OAuthProvider("apple.com");
-	  const result = await signInWithPopup(auth, provider);
-	  // result.user contains user info
-	  console.log("Apple sign-in successful", result.user);
-	  onLogin();
-	} catch (error) {
-	  console.error("Error with Apple sign-in:", error);
-	  setError(error.message || "Failed to sign in with Apple");
-	}
-  };
-
-  // ---------------------
-  //  PHONE LOGIN
-  // ---------------------
   const handleSendOtp = async (e) => {
 	e.preventDefault();
 	setError(null);
@@ -107,8 +66,9 @@ function Login({ onLogin }) {
 	try {
 	  setVerifying(true);
 	  await confirmationResult.confirm(otp);
+
 	  console.log("Phone number verified!");
-	  onLogin(); // callback to let App.js know we're logged in
+	  onLogin();
 	} catch (err) {
 	  console.error("Error verifying OTP:", err);
 	  setError("Invalid OTP. Please try again.");
@@ -119,31 +79,11 @@ function Login({ onLogin }) {
 
   return (
 	<div className="m-8 text-center">
-	  <h2 className="text-2xl font-bold">Login</h2>
+	  <h2 className="text-2xl font-bold">Login with Phone</h2>
 
 	  {error && <p className="text-red-500">{error}</p>}
 
-	  {/* -------------------------------- */}
-	  {/*    GOOGLE / APPLE LOGIN BUTTONS   */}
-	  {/* -------------------------------- */}
-	  <div className="inline-block text-left mt-4">
-		<button
-		  onClick={handleGoogleLogin}
-		  className="py-1 px-3 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-		>
-		  Sign in with Google
-		</button>
-		<button
-		  onClick={handleAppleLogin}
-		  className="ml-3 py-1 px-3 bg-black text-white rounded hover:bg-gray-900 transition-colors"
-		>
-		  Sign in with Apple
-		</button>
-	  </div>
-
-	  {/* -------------------------------- */}
-	  {/*   PHONE LOGIN STEP 1: SEND OTP    */}
-	  {/* -------------------------------- */}
+	  {/* Step 1: Send OTP */}
 	  {!confirmationResult && (
 		<form onSubmit={handleSendOtp} className="inline-block text-left mt-4">
 		  <label htmlFor="mobileNumber" className="block mb-1 font-medium">
@@ -167,9 +107,7 @@ function Login({ onLogin }) {
 		</form>
 	  )}
 
-	  {/* -------------------------------- */}
-	  {/*  PHONE LOGIN STEP 2: VERIFY OTP   */}
-	  {/* -------------------------------- */}
+	  {/* Step 2: Verify OTP */}
 	  {confirmationResult && (
 		<form onSubmit={handleVerifyOtp} className="inline-block text-left mt-4">
 		  <label htmlFor="otp" className="block mb-1 font-medium">
@@ -193,7 +131,7 @@ function Login({ onLogin }) {
 		</form>
 	  )}
 
-	  {/* Invisible reCAPTCHA container for phone auth */}
+	  {/* Invisible reCAPTCHA container */}
 	  <div id="recaptcha-container"></div>
 	</div>
   );
