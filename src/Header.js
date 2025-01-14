@@ -1,7 +1,8 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/Header.js
+// File: /src/Header.js
 
 import React from "react";
 import { getAuth, signOut } from "firebase/auth";
+import { Link } from "react-router-dom";
 
 function Header({ isLoggedIn, onLogout, airtableUser }) {
   const handleLogout = async () => {
@@ -17,7 +18,22 @@ function Header({ isLoggedIn, onLogout, airtableUser }) {
 
   return (
 	<header className="flex justify-between items-center p-4 bg-gray-100">
-	  <h1 className="text-xl font-bold">Big Idea</h1>
+	  <div className="flex items-center space-x-4">
+		<h1 className="text-xl font-bold">
+		  <Link to="/">Big Idea</Link>
+		</h1>
+
+		{/* (Optional) Link to Today */}
+		{isLoggedIn && (
+		  <Link
+			to="/today"
+			className="py-1 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+		  >
+			Today
+		  </Link>
+		)}
+	  </div>
+
 	  <div>
 		{isLoggedIn ? (
 		  <>

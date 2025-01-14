@@ -139,7 +139,6 @@ function IdeaDetail() {
 	}
   };
 
-  // PATCH updated Orders in Airtable
   const updateTaskOrderInAirtable = async (reorderedTasks) => {
 	if (!baseId || !apiKey) {
 	  throw new Error("Missing Airtable credentials for reorder update");
@@ -200,6 +199,7 @@ function IdeaDetail() {
 				  Completed: false,
 				  CompletedTime: null,
 				  ParentTask: "", // top-level tasks have no Parent
+				  Today: false,   // By default, could be false
 				},
 			  },
 			],
@@ -256,6 +256,7 @@ function IdeaDetail() {
 				  Completed: false,
 				  CompletedTime: null,
 				  ParentTask: parentTaskID,
+				  Today: false, // Subtasks can also have this field in Airtable, but we won't show it in the UI
 				},
 			  },
 			],
@@ -279,30 +280,24 @@ function IdeaDetail() {
   // --------------------------------------------------------------------------
   // Inline editing for Task Name
   // --------------------------------------------------------------------------
-  // 1) Start editing
   const startEditingTask = (taskId, currentName) => {
 	setEditingTaskId(taskId);
 	setEditingTaskName(currentName);
   };
 
-  // 2) As user types, we do NOT patch
   const handleEditNameChange = (newName) => {
 	setEditingTaskName(newName);
   };
 
-  // 3) Commit on Enter or Blur => patch
   const commitEdit = async (taskId) => {
-	// Patch in Airtable (and local state) via handleEditSave
 	await handleEditSave(taskId, editingTaskName);
   };
 
-  // 4) Cancel editing
   const cancelEditing = () => {
 	setEditingTaskId(null);
 	setEditingTaskName("");
   };
 
-  // The actual function that patches to Airtable
   const handleEditSave = async (taskId, newName) => {
 	// Locally update tasks for immediate feedback
 	const updatedTasks = tasks.map((t) => {
@@ -434,6 +429,78 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
+  // Toggle "Today"
+  // --------------------------------------------------------------------------
+  const handleToggleToday = async (task) => {
+	const currentValue = task.fields.Today || false;
+	const newValue = !currentValue;
+
+	// 1) Optimistic UI update
+	setTasks((prevTasks) =>
+	  prevTasks.map((t) => {
+		if (t.id === task.id) {
+		  return {
+			...t,
+			fields: {
+			  ...t.fields,
+			  Today: newValue,
+			},
+		  };
+		}
+		return t;
+	  })
+	);
+
+	// 2) Patch to Airtable
+	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: task.id,
+			  fields: {
+				Today: newValue,
+			  },
+			},
+		  ],
+		}),
+	  });
+
+	  if (!resp.ok) {
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	} catch (err) {
+	  console.error("Error toggling Today:", err);
+	  setError("Failed to toggle Today. Please try again.");
+
+	  // (Optional) revert local changes if patch fails
+	  setTasks((prevTasks) =>
+		prevTasks.map((t) => {
+		  if (t.id === task.id) {
+			return {
+			  ...t,
+			  fields: {
+				...t.fields,
+				Today: currentValue,
+			  },
+			};
+		  }
+		  return t;
+		})
+	  );
+	}
+  };
+
+  // --------------------------------------------------------------------------
   // Group tasks by ParentTask => allows nesting
   // --------------------------------------------------------------------------
   const topLevelTasks = tasks.filter((t) => !t.fields.ParentTask);
@@ -521,6 +588,7 @@ function IdeaDetail() {
 				onCommitEdit={commitEdit}
 				onCancelEditing={cancelEditing}
 				onToggleCompleted={handleToggleCompleted}
+				onToggleToday={handleToggleToday} // <-- pass the new handler
 				onCreateSubtask={createSubtask}
 			  />
 			);

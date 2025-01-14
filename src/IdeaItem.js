@@ -23,7 +23,7 @@ function IdeaItem({
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // Start editing the title
+  // Start editing the idea title
   const startEditingTitle = () => {
 	setIsEditingTitle(true);
 	setEditingTitle(idea.fields.IdeaTitle);
@@ -38,15 +38,15 @@ function IdeaItem({
   // Save changes to Airtable
   const handleTitleSave = async () => {
 	if (editingTitle.trim() === "") {
-	  // If user cleared the title, revert or handle as you wish
+	  // If user cleared the title, revert or handle otherwise
 	  cancelEditingTitle();
 	  return;
 	}
 	try {
-	  // Update local object to show immediate changes
+	  // Update local object (immediate feedback)
 	  idea.fields.IdeaTitle = editingTitle;
 
-	  // Send PATCH request
+	  // Send PATCH request to Airtable
 	  await patchIdeaTitleInAirtable(idea.id, editingTitle);
 
 	  // Exit editing mode
@@ -92,6 +92,9 @@ function IdeaItem({
 	console.log(`Drag started for Idea ID: ${idea.id}`);
   };
 
+  // Filter tasks to only show incomplete
+  const incompleteTasks = ideaTasks.filter((t) => !t.fields.Completed);
+
   return (
 	<li
 	  onMouseEnter={onHoverEnter}
@@ -109,6 +112,7 @@ function IdeaItem({
 	  </div>
 
 	  <div className="flex-1">
+		{/* Title / Delete */}
 		<div className="flex justify-between items-start">
 		  <div>
 			{isEditingTitle ? (
@@ -159,14 +163,14 @@ function IdeaItem({
 		{/* Tasks Section */}
 		<div className="mt-3 pl-4 border-l border-gray-200">
 		  <h4 className="font-semibold">Tasks:</h4>
-		  {ideaTasks.length > 0 ? (
+		  {incompleteTasks.length > 0 ? (
 			<ul className="list-disc list-inside">
-			  {ideaTasks.map((task) => (
+			  {incompleteTasks.map((task) => (
 				<li key={task.id}>{task.fields.TaskName}</li>
 			  ))}
 			</ul>
 		  ) : (
-			<p className="text-sm text-gray-500">No tasks yet.</p>
+			<p className="text-sm text-gray-500">No incomplete tasks.</p>
 		  )}
 
 		  {/* Add New Task Form */}

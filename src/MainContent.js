@@ -198,12 +198,10 @@ function MainContent() {
 	  },
 	}));
 
-	// Airtable only allows up to 10 records per request,
-	// so we'll chunk the `toUpdate` array in groups of 10
+	// Airtable only allows up to 10 records per request
 	const chunks = chunkArray(toUpdate, 10);
 
 	for (const chunk of chunks) {
-	  // Send each chunk in a separate PATCH request
 	  console.log("Patching chunk to Airtable:", chunk);
 
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
@@ -262,7 +260,7 @@ function MainContent() {
 		},
 	  }));
 
-	  // 2) Update them in Airtable (in case there are more than 10, chunking happens inside updateIdeasOrderInAirtable)
+	  // 2) Update them in Airtable
 	  if (shifted.length > 0) {
 		await updateIdeasOrderInAirtable(shifted);
 	  }
@@ -317,7 +315,7 @@ function MainContent() {
   };
 
   // --------------------------------------------------------------------------
-  // 6) Delete an Idea
+  // 6) Delete an Idea (and its associated tasks)
   // --------------------------------------------------------------------------
   const handleDeleteClick = (ideaId) => {
 	console.log("Delete clicked for ideaId:", ideaId);
@@ -329,7 +327,7 @@ function MainContent() {
 	deleteIdea(ideaId);
   };
 
-  const deleteIdea = async (ideaId) => {
+  async function deleteIdea(ideaId) {
 	console.log("Deleting idea with ID:", ideaId);
 
 	if (!baseId || !apiKey) {
@@ -338,6 +336,53 @@ function MainContent() {
 	}
 
 	try {
+	  // 1) Fetch all tasks for this Idea
+	  const tasksResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"`,
+		{
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+		  },
+		}
+	  );
+	  if (!tasksResp.ok) {
+		throw new Error(
+		  `Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+		);
+	  }
+
+	  const tasksData = await tasksResp.json();
+	  const taskRecords = tasksData.records; // all tasks belonging to the idea
+
+	  // 2) Batch-delete the tasks (in chunks of 10, if any)
+	  if (taskRecords.length > 0) {
+		const taskChunks = chunkArray(taskRecords, 10);
+
+		for (const chunk of taskChunks) {
+		  const idsToDelete = chunk.map((rec) => rec.id);
+		  const deleteUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
+
+		  // Append multiple "records[]" params to the query string
+		  idsToDelete.forEach((id) =>
+			deleteUrl.searchParams.append("records[]", id)
+		  );
+
+		  const deleteResp = await fetch(deleteUrl.toString(), {
+			method: "DELETE",
+			headers: {
+			  Authorization: `Bearer ${apiKey}`,
+			},
+		  });
+
+		  if (!deleteResp.ok) {
+			throw new Error(
+			  `Airtable error: ${deleteResp.status} ${deleteResp.statusText}`
+			);
+		  }
+		}
+	  }
+
+	  // 3) Now delete the Idea
 	  const resp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
 		{
@@ -348,29 +393,23 @@ function MainContent() {
 		}
 	  );
 	  if (!resp.ok) {
-		let errorBody;
-		try {
-		  errorBody = await resp.json();
-		} catch {
-		  errorBody = {};
-		}
-		console.error("Airtable returned an error body:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
-	  // Remove idea from local state
+	  // 4) Update local state
 	  setIdeas((prev) => prev.filter((idea) => idea.id !== ideaId));
 	  setDeleteConfirm((prev) => {
 		const nextConfirm = { ...prev };
 		delete nextConfirm[ideaId];
 		return nextConfirm;
 	  });
-	  console.log("Idea deleted from Airtable:", ideaId);
+
+	  console.log(`Idea ${ideaId} and its tasks are deleted from Airtable.`);
 	} catch (err) {
-	  console.error("Error deleting idea:", err);
-	  setError("Failed to delete idea. Please try again later.");
+	  console.error("Error deleting idea or its tasks:", err);
+	  setError("Failed to delete the idea and its tasks. Please try again.");
 	}
-  };
+  }
 
   // --------------------------------------------------------------------------
   // 7) Create a new Task (unchanged logic, still includes Completed=false, etc.)

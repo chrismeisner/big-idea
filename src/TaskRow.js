@@ -8,16 +8,23 @@ function TaskRow({
   editingTaskId,
   editingTaskName,
   onStartEditing,
-  onEditNameChange,   // <--- new callback
-  onCommitEdit,       // <--- new callback
+  onEditNameChange,
+  onCommitEdit,
   onCancelEditing,
   onToggleCompleted,
+  onToggleToday,
   onCreateSubtask,
 }) {
   // Parent (top-level) task states
   const isEditingParent = editingTaskId === task.id;
   const isCompletedParent = task.fields.Completed || false;
   const completedTimeParent = task.fields.CompletedTime || null;
+
+  // "Today" boolean from Airtable
+  const isTodayParent = task.fields.Today || false;
+
+  // Check if this is a top-level (parent) task => means no "ParentTask" value
+  const isTopLevel = !task.fields.ParentTask;
 
   return (
 	<>
@@ -45,11 +52,11 @@ function TaskRow({
 			autoFocus
 			className="flex-1 border-b border-gray-300 focus:outline-none"
 			value={editingTaskName}
-			onChange={(e) => onEditNameChange(e.target.value)} 
-			onBlur={() => onCommitEdit(task.id)}               // commit on blur
+			onChange={(e) => onEditNameChange(e.target.value)}
+			onBlur={() => onCommitEdit(task.id)} // commit on blur
 			onKeyDown={(e) => {
 			  if (e.key === "Enter") {
-				onCommitEdit(task.id);                         // commit on Enter
+				onCommitEdit(task.id); // commit on Enter
 			  } else if (e.key === "Escape") {
 				onCancelEditing();
 			  }
@@ -76,13 +83,35 @@ function TaskRow({
 		  </span>
 		)}
 
-		{/* "Add Subtask" button (on hover) */}
-		<button
-		  onClick={() => onCreateSubtask(task)}
-		  className="ml-2 text-sm py-1 px-2 bg-purple-600 text-white rounded hidden group-hover:inline-block"
-		>
-		  + Subtask
-		</button>
+		{/*
+		  Only show "Today" checkbox if:
+			1) This is a top-level task,
+			2) The task is NOT completed
+		*/}
+		{isTopLevel && !isCompletedParent && (
+		  <div className="ml-2 flex items-center space-x-1">
+			<input
+			  type="checkbox"
+			  checked={isTodayParent}
+			  onChange={() => onToggleToday(task)}
+			/>
+			<label className="text-sm">Today</label>
+		  </div>
+		)}
+
+		{/*
+		  Only show "+ Subtask" if:
+			1) This is a top-level task,
+			2) The task is NOT completed
+		*/}
+		{isTopLevel && !isCompletedParent && (
+		  <button
+			onClick={() => onCreateSubtask(task)}
+			className="ml-2 text-sm py-1 px-2 bg-purple-600 text-white rounded hidden group-hover:inline-block"
+		  >
+			+ Subtask
+		  </button>
+		)}
 	  </li>
 
 	  {/* RENDER SUBTASKS */}
@@ -132,20 +161,20 @@ function TaskRow({
 					className={`flex-1 cursor-pointer ${
 					  isCompletedSub ? "line-through text-gray-500" : ""
 					}`}
-					onClick={() =>
-					  onStartEditing(sub.id, sub.fields.TaskName)
-					}
+					onClick={() => onStartEditing(sub.id, sub.fields.TaskName)}
 				  >
 					{sub.fields.TaskName}
 				  </span>
 				)}
 
-				{/* Optional: show CompletedTime if completed */}
+				{/* Show CompletedTime if subtask is completed */}
 				{isCompletedSub && completedTimeSub && (
 				  <span className="ml-2 text-sm text-gray-400">
 					(Done on {new Date(completedTimeSub).toLocaleString()})
 				  </span>
 				)}
+
+				{/* We do NOT show the "Today" checkbox or "Add Subtask" for subtasks */}
 			  </li>
 			);
 		  })}
