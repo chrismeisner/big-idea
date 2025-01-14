@@ -1,8 +1,23 @@
-import React, { useEffect, useState } from "react";
+// File: /src/MainContent.js
+
+import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
+import Sortable from "sortablejs";
+import IdeaList from "./IdeaList";
+import { Bars3Icon } from "@heroicons/react/24/outline";
+
+// Helper to chunk an array into subarrays of size `size`
+function chunkArray(arr, size) {
+  const result = [];
+  for (let i = 0; i < arr.length; i += size) {
+	result.push(arr.slice(i, i + size));
+  }
+  return result;
+}
 
 function MainContent() {
   const [ideas, setIdeas] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -10,20 +25,28 @@ function MainContent() {
   const [newIdeaTitle, setNewIdeaTitle] = useState("");
   const [newIdeaSummary, setNewIdeaSummary] = useState("");
 
-  // NEW: State for hover & delete confirmation
+  // Hover & delete confirmations
   const [hoveredIdeaId, setHoveredIdeaId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState({});
 
+  // Airtable
+  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
+  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+
+  // Sortable refs
+  const ideasListRef = useRef(null);
+  const sortableRef = useRef(null);
+
+  // --------------------------------------------------------------------------
+  // 1) Fetch Ideas and Tasks (once on mount)
+  // --------------------------------------------------------------------------
   useEffect(() => {
-	const fetchIdeas = async () => {
+	const fetchIdeasAndTasks = async () => {
+	  console.log("Fetching ideas and tasks...");
 	  setLoading(true);
 	  setError(null);
 
-	  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-	  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
-
 	  if (!baseId || !apiKey) {
-		console.error("Airtable Base ID or API Key is missing in environment variables.");
 		setError("Missing Airtable credentials.");
 		setLoading(false);
 		return;
@@ -32,58 +55,192 @@ function MainContent() {
 	  try {
 		const auth = getAuth();
 		const currentUser = auth.currentUser;
-
 		if (!currentUser) {
 		  setError("No logged-in user.");
 		  setLoading(false);
 		  return;
 		}
 
-		const userPhoneNumber = currentUser.phoneNumber;
-
-		// Fetch data from Airtable
-		const response = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Ideas`,
+		// Fetch Ideas sorted by "Order"
+		console.log("Fetching ideas from Airtable...");
+		const ideasResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Ideas?sort[0][field]=Order&sort[0][direction]=asc`,
 		  {
 			headers: {
 			  Authorization: `Bearer ${apiKey}`,
 			},
 		  }
 		);
-
-		if (!response.ok) {
-		  throw new Error(`Airtable error: ${response.status} ${response.statusText}`);
+		if (!ideasResp.ok) {
+		  throw new Error(
+			`Airtable error: ${ideasResp.status} ${ideasResp.statusText}`
+		  );
 		}
+		const ideasData = await ideasResp.json();
+		console.log("Fetched ideas: ", ideasData.records);
 
-		const data = await response.json();
-
-		// Filter rows where UserMobile matches the logged-in user's phone number
-		const filteredIdeas = data.records.filter(
-		  (record) => record.fields.UserMobile === userPhoneNumber
+		const userPhoneNumber = currentUser.phoneNumber;
+		const userIdeas = ideasData.records.filter(
+		  (rec) => rec.fields.UserMobile === userPhoneNumber
 		);
+		console.log("Filtered ideas for user:", userPhoneNumber, userIdeas);
+		setIdeas(userIdeas);
 
-		setIdeas(filteredIdeas);
+		// Fetch tasks
+		console.log("Fetching tasks from Airtable...");
+		const tasksResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Tasks`,
+		  {
+			headers: {
+			  Authorization: `Bearer ${apiKey}`,
+			},
+		  }
+		);
+		if (!tasksResp.ok) {
+		  throw new Error(
+			`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+		  );
+		}
+		const tasksData = await tasksResp.json();
+		console.log("Fetched tasks: ", tasksData.records);
+		setTasks(tasksData.records);
 	  } catch (err) {
-		console.error("Error fetching ideas from Airtable:", err);
-		setError("Failed to fetch ideas. Please try again later.");
+		console.error("Error fetching data from Airtable:", err);
+		setError("Failed to fetch data. Please try again later.");
 	  } finally {
 		setLoading(false);
 	  }
 	};
 
-	fetchIdeas();
+	fetchIdeasAndTasks();
+	// If your baseId/apiKey can change, add them as dependencies
+	// }, [baseId, apiKey]);
   }, []);
 
-  // Create a new idea in Airtable
+  // --------------------------------------------------------------------------
+  // 2) Initialize Sortable after ideas are loaded
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+	if (
+	  !loading &&
+	  ideas.length > 0 &&
+	  ideasListRef.current &&
+	  !sortableRef.current
+	) {
+	  console.log("Initializing Sortable.js");
+	  sortableRef.current = new Sortable(ideasListRef.current, {
+		animation: 150,
+		handle: ".grab-idea-handle",
+		onEnd: handleSortEnd,
+	  });
+	  console.log("Sortable.js initialized");
+	}
+  }, [loading, ideas]);
+
+  // --------------------------------------------------------------------------
+  // 3) Cleanup Sortable on unmount
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+	return () => {
+	  if (sortableRef.current) {
+		console.log("Destroying Sortable.js instance on unmount");
+		sortableRef.current.destroy();
+		sortableRef.current = null;
+	  }
+	};
+  }, []);
+
+  // --------------------------------------------------------------------------
+  // 4) Reorder: local + patch Airtable
+  // --------------------------------------------------------------------------
+  const handleSortEnd = async (evt) => {
+	console.log("Drag ended:", evt);
+	const { oldIndex, newIndex } = evt;
+	if (oldIndex === newIndex) return;
+
+	const updated = [...ideas];
+	const [movedItem] = updated.splice(oldIndex, 1);
+	updated.splice(newIndex, 0, movedItem);
+
+	const reordered = updated.map((idea, i) => ({
+	  ...idea,
+	  fields: {
+		...idea.fields,
+		Order: i + 1,
+	  },
+	}));
+
+	console.log("New ideas order after drag:", reordered);
+	setIdeas(reordered);
+
+	try {
+	  await updateIdeasOrderInAirtable(reordered);
+	  console.log("Successfully updated Airtable with new order");
+	} catch (err) {
+	  console.error("Error reordering ideas in Airtable:", err);
+	  setError("Failed to reorder ideas. Please try again later.");
+	}
+  };
+
+  // --------------------------------------------------------------------------
+  // Update multiple ideas' Order in Airtable (with chunking)
+  // --------------------------------------------------------------------------
+  const updateIdeasOrderInAirtable = async (list) => {
+	if (!baseId || !apiKey) {
+	  throw new Error("Missing Airtable credentials for reorder update");
+	}
+
+	// Prepare an array of record objects
+	const toUpdate = list.map((idea) => ({
+	  id: idea.id,
+	  fields: {
+		Order: idea.fields.Order,
+	  },
+	}));
+
+	// Airtable only allows up to 10 records per request,
+	// so we'll chunk the `toUpdate` array in groups of 10
+	const chunks = chunkArray(toUpdate, 10);
+
+	for (const chunk of chunks) {
+	  // Send each chunk in a separate PATCH request
+	  console.log("Patching chunk to Airtable:", chunk);
+
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: chunk,
+		  typecast: true,
+		}),
+	  });
+
+	  if (!resp.ok) {
+		let errorBody;
+		try {
+		  errorBody = await resp.json();
+		} catch {
+		  errorBody = {};
+		}
+		console.error("Airtable returned an error body:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	}
+  };
+
+  // --------------------------------------------------------------------------
+  // 5) Create a new Idea at Order=1, shifting all others
+  // --------------------------------------------------------------------------
   const handleCreateIdea = async (e) => {
 	e.preventDefault();
 	setError(null);
 
-	const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-	const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+	console.log("Creating new idea at Order=1:", newIdeaTitle, newIdeaSummary);
 
 	if (!baseId || !apiKey) {
-	  console.error("Airtable Base ID or API Key is missing in environment variables.");
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
@@ -91,72 +248,89 @@ function MainContent() {
 	try {
 	  const auth = getAuth();
 	  const currentUser = auth.currentUser;
-
 	  if (!currentUser) {
 		setError("No logged-in user.");
 		return;
 	  }
 
-	  const userPhoneNumber = currentUser.phoneNumber;
+	  // 1) Shift all existing ideas' Order by +1 locally
+	  const shifted = ideas.map((idea) => ({
+		...idea,
+		fields: {
+		  ...idea.fields,
+		  Order: idea.fields.Order + 1,
+		},
+	  }));
 
-	  // Create a new Airtable record
-	  const response = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Ideas`,
-		{
-		  method: "POST",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				fields: {
-				  IdeaTitle: newIdeaTitle,
-				  IdeaSummary: newIdeaSummary,
-				  UserMobile: userPhoneNumber,
-				},
-			  },
-			],
-		  }),
-		}
-	  );
-
-	  if (!response.ok) {
-		throw new Error(`Airtable error: ${response.status} ${response.statusText}`);
+	  // 2) Update them in Airtable (in case there are more than 10, chunking happens inside updateIdeasOrderInAirtable)
+	  if (shifted.length > 0) {
+		await updateIdeasOrderInAirtable(shifted);
 	  }
 
-	  const data = await response.json();
+	  // 3) Create the new idea with Order = 1
+	  const userPhoneNumber = currentUser.phoneNumber;
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
+		method: "POST",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  fields: {
+				IdeaTitle: newIdeaTitle,
+				IdeaSummary: newIdeaSummary,
+				UserMobile: userPhoneNumber,
+				Order: 1,
+			  },
+			},
+		  ],
+		  typecast: true,
+		}),
+	  });
+	  if (!resp.ok) {
+		let errorBody;
+		try {
+		  errorBody = await resp.json();
+		} catch {
+		  errorBody = {};
+		}
+		console.error("Airtable returned an error body:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+
+	  const data = await resp.json();
 	  const createdRecord = data.records[0];
+	  console.log("New idea created in Airtable:", createdRecord);
 
-	  // Add the newly created idea to our list
-	  setIdeas((prevIdeas) => [...prevIdeas, createdRecord]);
+	  // 4) Prepend the new idea to local state, and include the shifted ideas
+	  setIdeas([createdRecord, ...shifted]);
 
-	  // Clear the form
+	  // Clear input fields
 	  setNewIdeaTitle("");
 	  setNewIdeaSummary("");
 	} catch (err) {
-	  console.error("Error creating idea in Airtable:", err);
+	  console.error("Error creating idea:", err);
 	  setError("Failed to create idea. Please try again later.");
 	}
   };
 
-  // NEW: Handler for the "Delete" button (two-click flow)
+  // --------------------------------------------------------------------------
+  // 6) Delete an Idea
+  // --------------------------------------------------------------------------
   const handleDeleteClick = (ideaId) => {
-	// If not yet confirmed, set the confirm state
+	console.log("Delete clicked for ideaId:", ideaId);
 	if (!deleteConfirm[ideaId]) {
 	  setDeleteConfirm((prev) => ({ ...prev, [ideaId]: true }));
 	  return;
 	}
-
-	// If it was already confirmed (second click), delete the record
+	console.log("Delete confirmed for ideaId:", ideaId);
 	deleteIdea(ideaId);
   };
 
-  // NEW: Actual function to delete record from Airtable
   const deleteIdea = async (ideaId) => {
-	const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-	const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+	console.log("Deleting idea with ID:", ideaId);
 
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
@@ -164,7 +338,7 @@ function MainContent() {
 	}
 
 	try {
-	  const response = await fetch(
+	  const resp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
 		{
 		  method: "DELETE",
@@ -173,42 +347,114 @@ function MainContent() {
 		  },
 		}
 	  );
-
-	  if (!response.ok) {
-		throw new Error(`Airtable error: ${response.status} ${response.statusText}`);
+	  if (!resp.ok) {
+		let errorBody;
+		try {
+		  errorBody = await resp.json();
+		} catch {
+		  errorBody = {};
+		}
+		console.error("Airtable returned an error body:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
-	  // Update state: remove the deleted idea
-	  setIdeas((prevIdeas) => prevIdeas.filter((idea) => idea.id !== ideaId));
-
-	  // Reset the delete confirmation state for this idea
+	  // Remove idea from local state
+	  setIdeas((prev) => prev.filter((idea) => idea.id !== ideaId));
 	  setDeleteConfirm((prev) => {
-		const newState = { ...prev };
-		delete newState[ideaId];
-		return newState;
+		const nextConfirm = { ...prev };
+		delete nextConfirm[ideaId];
+		return nextConfirm;
 	  });
+	  console.log("Idea deleted from Airtable:", ideaId);
 	} catch (err) {
-	  console.error("Error deleting idea in Airtable:", err);
+	  console.error("Error deleting idea:", err);
 	  setError("Failed to delete idea. Please try again later.");
 	}
   };
 
-  if (loading) {
-	return <p>Loading your ideas...</p>;
-  }
+  // --------------------------------------------------------------------------
+  // 7) Create a new Task (unchanged logic, still includes Completed=false, etc.)
+  // --------------------------------------------------------------------------
+  const createTask = async (ideaId, taskName) => {
+	console.log("Creating task for idea:", ideaId, "Task name:", taskName);
 
+	if (!baseId || !apiKey) {
+	  setError("Missing Airtable credentials.");
+	  return;
+	}
+
+	try {
+	  const orderValue = tasks.length + 1;
+
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "POST",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  fields: {
+				TaskName: taskName,
+				IdeaID: ideaId,
+				Order: orderValue,
+				Completed: false,
+				CompletedTime: null,
+			  },
+			},
+		  ],
+		  typecast: true,
+		}),
+	  });
+
+	  if (!resp.ok) {
+		let errorBody;
+		try {
+		  errorBody = await resp.json();
+		} catch {
+		  errorBody = {};
+		}
+		console.error("Airtable returned an error body:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+
+	  const data = await resp.json();
+	  const newTask = data.records[0];
+	  console.log("New task created in Airtable:", newTask);
+
+	  // Update local tasks state
+	  setTasks((prev) => [...prev, newTask]);
+	} catch (err) {
+	  console.error("Error creating task:", err);
+	  setError("Failed to create task. Please try again later.");
+	}
+  };
+
+  // --------------------------------------------------------------------------
+  // Render UI
+  // --------------------------------------------------------------------------
+  if (loading) {
+	return <p className="m-4">Loading your ideas...</p>;
+  }
   if (error) {
-	return <p className="text-red-500">{error}</p>;
+	return <p className="m-4 text-red-500">{error}</p>;
   }
 
   return (
-	<div className="m-8">
+	<div className="max-w-md mx-auto px-4 py-6">
 	  <h2 className="text-2xl font-bold mb-4">Your Ideas</h2>
 
-	  {/* Idea Creation Form */}
-	  <form onSubmit={handleCreateIdea} className="mb-6 p-4 border rounded bg-gray-100">
+	  {/* Create Idea */}
+	  <form
+		onSubmit={handleCreateIdea}
+		className="mb-6 p-4 border rounded bg-gray-100"
+	  >
 		<div className="mb-4">
-		  <label htmlFor="newIdeaTitle" className="block text-sm font-medium mb-1">
+		  <label
+			htmlFor="newIdeaTitle"
+			className="block text-sm font-medium mb-1"
+		  >
 			Idea Title
 		  </label>
 		  <input
@@ -221,7 +467,10 @@ function MainContent() {
 		  />
 		</div>
 		<div className="mb-4">
-		  <label htmlFor="newIdeaSummary" className="block text-sm font-medium mb-1">
+		  <label
+			htmlFor="newIdeaSummary"
+			className="block text-sm font-medium mb-1"
+		  >
 			Idea Summary
 		  </label>
 		  <textarea
@@ -240,40 +489,17 @@ function MainContent() {
 		</button>
 	  </form>
 
-	  {/* Existing list of Ideas */}
-	  {ideas.length > 0 ? (
-		<ul className="space-y-4">
-		  {ideas.map((idea) => {
-			const isHovered = hoveredIdeaId === idea.id;
-			const isConfirming = deleteConfirm[idea.id];
-
-			return (
-			  <li
-				key={idea.id}
-				className="relative p-4 border rounded shadow-sm bg-gray-50 hover:shadow-md transition"
-				// Track which idea is hovered
-				onMouseEnter={() => setHoveredIdeaId(idea.id)}
-				onMouseLeave={() => setHoveredIdeaId(null)}
-			  >
-				<h3 className="text-lg font-bold">{idea.fields.IdeaTitle}</h3>
-				<p className="text-gray-600 mt-1">{idea.fields.IdeaSummary}</p>
-
-				{/* Show the delete button only on hover */}
-				{isHovered && (
-				  <button
-					className="absolute top-2 right-2 text-sm bg-red-500 text-white py-1 px-2 rounded hover:bg-red-600 transition"
-					onClick={() => handleDeleteClick(idea.id)}
-				  >
-					{isConfirming ? "Really?" : "Delete"}
-				  </button>
-				)}
-			  </li>
-			);
-		  })}
-		</ul>
-	  ) : (
-		<p>No ideas found for your account.</p>
-	  )}
+	  {/* Idea List (child component) */}
+	  <IdeaList
+		ideas={ideas}
+		tasks={tasks}
+		ideasListRef={ideasListRef}
+		hoveredIdeaId={hoveredIdeaId}
+		setHoveredIdeaId={setHoveredIdeaId}
+		deleteConfirm={deleteConfirm}
+		handleDeleteClick={handleDeleteClick}
+		onCreateTask={createTask}
+	  />
 	</div>
   );
 }

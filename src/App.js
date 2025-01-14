@@ -1,18 +1,21 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/App.js
+// File: /src/App.js
 
 import React, { useEffect, useState } from "react";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+
 import Header from "./Header";
 import Login from "./Login";
 import MainContent from "./MainContent";
 import Onboarding from "./Onboarding";
+import IdeaDetail from "./IdeaDetail";
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [airtableUser, setAirtableUser] = useState(null);
 
-  // We'll use a helper check to see if Name is present
-  const userNeedsOnboarding = airtableUser && !airtableUser.fields?.Name;
+  // NEW: Track if we've finished checking Firebase auth
+  const [authLoaded, setAuthLoaded] = useState(false);
 
   useEffect(() => {
     const auth = getAuth();
@@ -25,10 +28,15 @@ function App() {
         setIsLoggedIn(false);
         setAirtableUser(null);
       }
+      // Mark that we have finished checking user auth state
+      setAuthLoaded(true);
     });
 
     return () => unsubscribe();
   }, []);
+
+  // We'll use a helper check to see if Name is present
+  const userNeedsOnboarding = airtableUser && !airtableUser.fields?.Name;
 
   const handleLogin = (userRecord) => {
     console.log("handleLogin in App.js called with Airtable user:", userRecord);
@@ -36,7 +44,6 @@ function App() {
     setAirtableUser(userRecord);
   };
 
-  // Once Onboarding is done, we save the updated record and continue.
   const handleOnboardingComplete = (updatedRecord) => {
     setAirtableUser(updatedRecord);
   };
@@ -46,25 +53,44 @@ function App() {
     setAirtableUser(null);
   };
 
+  // 1) If we're still loading auth, show a fallback (spinner, text, etc.)
+  if (!authLoaded) {
+    return <div className="m-8">Checking login status...</div>;
+  }
+
+  // 2) Once authLoaded is true, render normally:
   return (
-    <div>
+    <Router>
       <Header
         isLoggedIn={isLoggedIn}
         onLogout={handleLogout}
         airtableUser={airtableUser}
       />
 
-      {!isLoggedIn ? (
-        // Step 1: Not logged in => show phone login
-        <Login onLogin={handleLogin} />
-      ) : userNeedsOnboarding ? (
-        // Step 2: If logged in but no Name => show onboarding
-        <Onboarding userRecord={airtableUser} onComplete={handleOnboardingComplete} />
-      ) : (
-        // Step 3: If logged in and Name is present => Main content
-        <MainContent />
-      )}
-    </div>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            !isLoggedIn ? (
+              // If not logged in => show phone login
+              <Login onLogin={handleLogin} />
+            ) : userNeedsOnboarding ? (
+              // If logged in but missing user Name => show onboarding
+              <Onboarding
+                userRecord={airtableUser}
+                onComplete={handleOnboardingComplete}
+              />
+            ) : (
+              // Otherwise => show main content
+              <MainContent />
+            )
+          }
+        />
+
+        {/* Detail view for a single idea (only valid once authLoaded) */}
+        <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
+      </Routes>
+    </Router>
   );
 }
 
