@@ -5,37 +5,7 @@ import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import { Bars3Icon } from "@heroicons/react/24/outline";
-
-// A simple modal component for picking a milestone
-function PickMilestoneModal({ allMilestones, onClose, onSelectMilestone }) {
-  return (
-	<div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
-	  <div className="bg-white p-4 rounded shadow-lg w-80">
-		<h3 className="text-lg font-semibold mb-3">Pick a Milestone</h3>
-
-		<ul className="max-h-64 overflow-y-auto border rounded divide-y">
-		  {allMilestones.map((m) => (
-			<li key={m.id}>
-			  <button
-				className="w-full text-left p-2 hover:bg-gray-100"
-				onClick={() => onSelectMilestone(m)}
-			  >
-				{m.fields.MilestoneName || "(Untitled Milestone)"}
-			  </button>
-			</li>
-		  ))}
-		</ul>
-
-		<button
-		  onClick={onClose}
-		  className="mt-3 px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
-		>
-		  Cancel
-		</button>
-	  </div>
-	</div>
-  );
-}
+import MilestoneModal from "./MilestoneModal"; // <-- Reuse our existing MilestoneModal
 
 function IdeaDetail() {
   const [idea, setIdea] = useState(null);
@@ -121,7 +91,6 @@ function IdeaDetail() {
 		setTasks(tasksData.records);
 
 		// C) Fetch ALL Milestones
-		//    (Now we do NOT rely on TaskID in Milestones. We'll store the chosen milestone in Task.fields.MilestoneID.)
 		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones`,
 		  { headers: { Authorization: `Bearer ${apiKey}` } }
@@ -350,7 +319,6 @@ function IdeaDetail() {
 				  CompletedTime: null,
 				  ParentTask: "",
 				  Today: false,
-				  // We'll add MilestoneID if chosen, but for new tasks, it's empty
 				},
 			  },
 			],
@@ -408,7 +376,6 @@ function IdeaDetail() {
 				  CompletedTime: null,
 				  ParentTask: parentID,
 				  Today: false,
-				  // MilestoneID empty, by default
 				},
 			  },
 			],
@@ -799,15 +766,15 @@ function IdeaDetail() {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
-	  {/* If modal is open, render it here */}
+	  {/* If modal is open, render the shared MilestoneModal instead of PickMilestoneModal */}
 	  {showMilestoneModal && (
-		<PickMilestoneModal
+		<MilestoneModal
 		  allMilestones={milestones}
 		  onClose={() => {
 			setShowMilestoneModal(false);
 			setActiveTaskForMilestone(null);
 		  }}
-		  onSelectMilestone={assignMilestoneToTask}
+		  onSelect={assignMilestoneToTask}
 		/>
 	  )}
 
@@ -848,10 +815,7 @@ function IdeaDetail() {
 
 	  <h3 className="text-xl font-semibold mt-6 mb-2">Tasks:</h3>
 	  {tasks.length > 0 ? (
-		<ul
-		  className="divide-y divide-gray-200 border rounded"
-		  ref={topLevelRef}
-		>
+		<ul className="divide-y divide-gray-200 border rounded" ref={topLevelRef}>
 		  {topLevelTasks.map((parent) => {
 			const parentCompleted = parent.fields.Completed || false;
 			const parentCompletedTime = parent.fields.CompletedTime || null;
@@ -932,7 +896,8 @@ function IdeaDetail() {
 					  <strong>{parentMilestone.fields.MilestoneName}</strong>
 					</p>
 				  ) : (
-					<p className="text-sm text-blue-600 underline cursor-pointer"
+					<p
+					  className="text-sm text-blue-600 underline cursor-pointer"
 					  onClick={() => handlePickMilestone(parent)}
 					>
 					  No milestone yet. (Click to add)
@@ -952,10 +917,7 @@ function IdeaDetail() {
 					  const subMilestone = getMilestoneForTask(sub);
 
 					  return (
-						<li
-						  key={sub.id}
-						  className="py-2 pl-3 hover:bg-gray-50"
-						>
+						<li key={sub.id} className="py-2 pl-3 hover:bg-gray-50">
 						  <div className="flex items-center">
 							<div
 							  className="sub-grab-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
@@ -1002,10 +964,7 @@ function IdeaDetail() {
 							  {subCompleted && subCompletedTime && (
 								<span className="ml-2 text-sm text-gray-400">
 								  (Done on{" "}
-								  {new Date(
-									subCompletedTime
-								  ).toLocaleString()}
-								  )
+								  {new Date(subCompletedTime).toLocaleString()})
 								</span>
 							  )}
 							</div>
@@ -1013,9 +972,7 @@ function IdeaDetail() {
 
 						  {/* MILESTONE for this subtask */}
 						  <div className="ml-6 mt-1 pl-3 border-l border-gray-200">
-							<h4 className="font-semibold text-sm">
-							  Milestone:
-							</h4>
+							<h4 className="font-semibold text-sm">Milestone:</h4>
 							{subMilestone ? (
 							  <p className="text-sm">
 								<strong>

@@ -7,16 +7,21 @@ import airtableBase from "./airtable"; // your configured Airtable instance
 
 function Milestones() {
   const [milestones, setMilestones] = useState([]);
+
+  // Form fields
   const [newMilestoneName, setNewMilestoneName] = useState("");
+  const [newMilestoneTime, setNewMilestoneTime] = useState("");
+  const [newMilestoneNotes, setNewMilestoneNotes] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // If you rely on environment variables:
+  // Environment variables
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   // --------------------------------------------------------------------------
-  // 1) Fetch all Milestones on mount
+  // 1) Fetch all Milestones on mount, sorted by "Created" descending
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchMilestones = async () => {
@@ -37,17 +42,15 @@ function Milestones() {
 
 		setLoading(true);
 
-		// Fetch Milestones sorted by Name
+		// Sort by Created (descending)
 		const resp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Milestones?sort[0][field]=MilestoneName&sort[0][direction]=asc`,
+		  `https://api.airtable.com/v0/${baseId}/Milestones?sort[0][field]=Created&sort[0][direction]=desc`,
 		  {
 			headers: { Authorization: `Bearer ${apiKey}` },
 		  }
 		);
 		if (!resp.ok) {
-		  throw new Error(
-			`Airtable error: ${resp.status} ${resp.statusText}`
-		  );
+		  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 		}
 
 		const data = await resp.json();
@@ -64,7 +67,7 @@ function Milestones() {
   }, [baseId, apiKey]);
 
   // --------------------------------------------------------------------------
-  // 2) Create a new Milestone
+  // 2) Create a new Milestone => prepend it to the list
   // --------------------------------------------------------------------------
   const handleCreateMilestone = async (e) => {
 	e.preventDefault();
@@ -83,6 +86,20 @@ function Milestones() {
 		return;
 	  }
 
+	  const fieldsToWrite = {
+		MilestoneName: newMilestoneName,
+	  };
+
+	  // If user provided a date/time, store it
+	  if (newMilestoneTime) {
+		fieldsToWrite.MilestoneTime = newMilestoneTime;
+	  }
+
+	  // If user provided notes
+	  if (newMilestoneNotes.trim()) {
+		fieldsToWrite.MilestoneNotes = newMilestoneNotes;
+	  }
+
 	  // Make the POST request to Airtable
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Milestones`, {
 		method: "POST",
@@ -93,10 +110,7 @@ function Milestones() {
 		body: JSON.stringify({
 		  records: [
 			{
-			  fields: {
-				MilestoneName: newMilestoneName,
-				// If you have other fields like "MilestoneTime", you can add them here
-			  },
+			  fields: fieldsToWrite,
 			},
 		  ],
 		  typecast: true,
@@ -113,9 +127,13 @@ function Milestones() {
 	  const createdRecord = data.records[0];
 	  console.log("Milestone created:", createdRecord);
 
-	  // Update local state
-	  setMilestones((prev) => [...prev, createdRecord]);
-	  setNewMilestoneName(""); // clear input
+	  // Prepend the newly created milestone
+	  setMilestones((prev) => [createdRecord, ...prev]);
+
+	  // Clear the inputs
+	  setNewMilestoneName("");
+	  setNewMilestoneTime("");
+	  setNewMilestoneNotes("");
 	} catch (err) {
 	  console.error("Error creating milestone:", err);
 	  setError("Failed to create milestone. Please try again.");
@@ -146,20 +164,49 @@ function Milestones() {
 		  htmlFor="newMilestoneName"
 		  className="block text-sm font-medium mb-1"
 		>
-		  New Milestone Name
+		  Milestone Name
 		</label>
 		<input
 		  id="newMilestoneName"
 		  type="text"
-		  className="border p-2 w-full"
+		  className="border p-2 w-full mb-3"
 		  placeholder="e.g. Launch Beta..."
 		  value={newMilestoneName}
 		  onChange={(e) => setNewMilestoneName(e.target.value)}
 		  required
 		/>
+
+		<label
+		  htmlFor="newMilestoneTime"
+		  className="block text-sm font-medium mb-1"
+		>
+		  Target Date/Time
+		</label>
+		<input
+		  id="newMilestoneTime"
+		  type="datetime-local"
+		  className="border p-2 w-full mb-3"
+		  value={newMilestoneTime}
+		  onChange={(e) => setNewMilestoneTime(e.target.value)}
+		/>
+
+		<label
+		  htmlFor="newMilestoneNotes"
+		  className="block text-sm font-medium mb-1"
+		>
+		  Notes
+		</label>
+		<textarea
+		  id="newMilestoneNotes"
+		  className="border p-2 w-full mb-3"
+		  placeholder="Any notes or details..."
+		  value={newMilestoneNotes}
+		  onChange={(e) => setNewMilestoneNotes(e.target.value)}
+		/>
+
 		<button
 		  type="submit"
-		  className="mt-2 py-1 px-3 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
+		  className="py-1 px-3 bg-green-600 text-white rounded hover:bg-green-700 transition-colors"
 		>
 		  Create Milestone
 		</button>
@@ -169,14 +216,21 @@ function Milestones() {
 	  {milestones.length > 0 ? (
 		<ul className="divide-y divide-gray-200 border rounded">
 		  {milestones.map((m) => {
-			const { MilestoneName, MilestoneTime } = m.fields;
+			const { MilestoneName, MilestoneTime, MilestoneNotes } = m.fields;
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
 				<strong>{MilestoneName || "(Untitled)"}</strong>
+
 				{MilestoneTime && (
 				  <span className="ml-2 text-xs text-gray-500">
 					(Due: {new Date(MilestoneTime).toLocaleString()})
 				  </span>
+				)}
+
+				{MilestoneNotes && (
+				  <p className="mt-1 text-sm text-gray-700 whitespace-pre-line">
+					{MilestoneNotes}
+				  </p>
 				)}
 			  </li>
 			);
