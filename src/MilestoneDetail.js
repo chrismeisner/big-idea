@@ -3,21 +3,24 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
+import airtableBase from "./airtable";
 
 /**
  * MilestoneDetail
  * 
- * Displays the details of a single Milestone (by ID), plus
- * all Tasks referencing this Milestone, grouped by their Idea.
+ * Fetch a single milestone by its custom MilestoneID (not the raw record ID),
+ * plus all tasks referencing that same custom ID. 
+ * Then fetch all Ideas, so we can link tasks back to their Idea pages.
  */
 function MilestoneDetail() {
-  const { milestoneId } = useParams(); // e.g. "recABC123..."
+  const { milestoneCustomId } = useParams(); // e.g. /milestones/:milestoneCustomId
   const [milestone, setMilestone] = useState(null);
   const [tasks, setTasks] = useState([]);
-  const [ideas, setIdeas] = useState([]);
+  const [ideas, setIdeas] = useState([]); // We’ll fetch ideas to display the Idea Title + link
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Environment
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
@@ -33,39 +36,36 @@ function MilestoneDetail() {
 		const auth = getAuth();
 		const currentUser = auth.currentUser;
 		if (!currentUser) {
-		  setError("No logged-in user.");
+		  setError("No logged-in user. Please log in first.");
 		  setLoading(false);
 		  return;
 		}
 
 		setLoading(true);
 
-		// 1) Fetch the single Milestone record
-		//    Here we assume "milestoneId" is the Airtable record's actual ID (e.g. "recXYZ123")
-		//    If you store a custom formula ID, adjust your filter accordingly.
-		const milestoneResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Milestones/${milestoneId}`,
-		  {
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			},
-		  }
-		);
+		// 1) Fetch milestone via custom ID
+		const milestoneUrl = `https://api.airtable.com/v0/${baseId}/Milestones?filterByFormula={MilestoneID}="${milestoneCustomId}"`;
+		const milestoneResp = await fetch(milestoneUrl, {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!milestoneResp.ok) {
 		  throw new Error(
 			`Airtable error (Milestone): ${milestoneResp.status} ${milestoneResp.statusText}`
 		  );
 		}
 		const milestoneData = await milestoneResp.json();
-		setMilestone(milestoneData);
+		if (milestoneData.records.length === 0) {
+		  setError(`No Milestone found for ID: ${milestoneCustomId}`);
+		  setLoading(false);
+		  return;
+		}
+		const foundMilestone = milestoneData.records[0];
+		setMilestone(foundMilestone);
 
-		// 2) Fetch all Tasks referencing this Milestone ID
-		//    (filterByFormula: WHERE {MilestoneID} = "recXYZ123")
-		const tasksUrl = `https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={MilestoneID}="${milestoneId}"`;
+		// 2) Fetch tasks that have {MilestoneID} = milestoneCustomId
+		const tasksUrl = `https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={MilestoneID}="${milestoneCustomId}"`;
 		const tasksResp = await fetch(tasksUrl, {
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-		  },
+		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!tasksResp.ok) {
 		  throw new Error(
@@ -75,12 +75,11 @@ function MilestoneDetail() {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// 3) (Optional) Fetch all Ideas so we can group tasks by Idea
+		// 3) Fetch all Ideas
+		//    We’ll display Idea Titles and link to /ideas/:IdeaID
 		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas`;
 		const ideasResp = await fetch(ideasUrl, {
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-		  },
+		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!ideasResp.ok) {
 		  throw new Error(
@@ -89,50 +88,18 @@ function MilestoneDetail() {
 		}
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
+
 	  } catch (err) {
 		console.error("Error fetching milestone detail:", err);
-		setError("Failed to load milestone info. Please try again.");
+		setError("Failed to load milestone data. Please try again.");
 	  } finally {
 		setLoading(false);
 	  }
 	};
 
 	fetchData();
-  }, [baseId, apiKey, milestoneId]);
+  }, [baseId, apiKey, milestoneCustomId]);
 
-  // --------------------------------------------------------------------------
-  // Group tasks by Idea
-  // --------------------------------------------------------------------------
-  // Each Task has something like .fields.IdeaID (your custom formula) OR 
-  // .fields.Idea (which might be a foreign link). Adjust accordingly.
-
-  // We'll build an object mapping IdeaID -> array of tasks
-  const tasksByIdea = {};
-  tasks.forEach((t) => {
-	const ideaId = t.fields.IdeaID; // or t.fields.Idea[0] if it's a linked record array
-	if (!tasksByIdea[ideaId]) {
-	  tasksByIdea[ideaId] = [];
-	}
-	tasksByIdea[ideaId].push(t);
-  });
-
-  // Then we can create an array of [ideaRecord, tasksForThatIdea].
-  // We'll find the actual Idea record in `ideas` by matching .id or a custom field
-  const groupedData = Object.entries(tasksByIdea).map(([ideaId, theseTasks]) => {
-	// Attempt to find the Idea record
-	// If your tasks store the real Airtable record ID in .fields.Idea,
-	// you can compare ideaId to ideaRecord.id
-	const ideaRecord = ideas.find((i) => i.id === ideaId);
-
-	return {
-	  idea: ideaRecord,
-	  tasks: theseTasks,
-	};
-  });
-
-  // --------------------------------------------------------------------------
-  // Render
-  // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading milestone details...</p>;
   }
@@ -140,11 +107,29 @@ function MilestoneDetail() {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
   if (!milestone) {
-	return <p className="m-4">No milestone found for ID: {milestoneId}</p>;
+	return <p className="m-4">No milestone found for ID: {milestoneCustomId}</p>;
   }
 
-  // Grab fields from the milestone record
-  const { MilestoneName, MilestoneTime, MilestoneNotes } = milestone.fields || {};
+  const { MilestoneName, MilestoneTime, MilestoneNotes } = milestone.fields;
+
+  // --------------------------------------------------------------------------
+  // Group tasks by Idea (since each Task has fields.IdeaID as a custom formula)
+  // --------------------------------------------------------------------------
+  const tasksByIdea = tasks.reduce((acc, t) => {
+	const ideaCustomId = t.fields.IdeaID; // e.g. "idea-xyz"
+	if (!acc[ideaCustomId]) acc[ideaCustomId] = [];
+	acc[ideaCustomId].push(t);
+	return acc;
+  }, {});
+
+  // Build an array of { ideaRecord, tasks } for each ideaCustomId that appears
+  const groupedData = Object.entries(tasksByIdea).map(([ideaCustomId, tasksForIdea]) => {
+	// Attempt to find the matching idea record
+	const ideaRecord = ideas.find(
+	  (i) => i.fields.IdeaID === ideaCustomId
+	);
+	return { ideaRecord, tasks: tasksForIdea };
+  });
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
@@ -152,52 +137,56 @@ function MilestoneDetail() {
 		&larr; Back to Milestones
 	  </Link>
 
-	  <h2 className="text-2xl font-bold mt-4">{MilestoneName || "(Untitled)"}</h2>
+	  <h2 className="text-2xl font-bold mt-4">
+		{MilestoneName || "(Untitled Milestone)"}
+	  </h2>
 	  {MilestoneTime && (
 		<p className="text-sm text-gray-600 mt-1">
 		  Due: {new Date(MilestoneTime).toLocaleString()}
 		</p>
 	  )}
-	  {MilestoneNotes && <p className="mt-2">{MilestoneNotes}</p>}
+	  {MilestoneNotes && (
+		<p className="mt-2 whitespace-pre-line">
+		  {MilestoneNotes}
+		</p>
+	  )}
 
 	  <hr className="my-4" />
 
-	  <h3 className="text-xl font-semibold mb-2">Tasks referencing this Milestone</h3>
+	  <h3 className="text-xl font-semibold mb-2">Tasks linked to this Milestone</h3>
 
 	  {tasks.length === 0 ? (
-		<p className="text-gray-500">No tasks are linked to this milestone yet.</p>
+		<p className="text-sm text-gray-500">No tasks linked to this milestone yet.</p>
 	  ) : (
 		<div>
-		  {groupedData.map(({ idea, tasks: tasksForIdea }) => {
-			// If we found an idea record
-			const ideaTitle = idea?.fields?.IdeaTitle || "(Untitled Idea)";
-			const ideaId = idea?.fields?.IdeaID; // or idea?.id, whichever you use
+		  {groupedData.map(({ ideaRecord, tasks: tasksForIdea }) => {
+			// If we found an idea record, we can link to /ideas/:ideaRecord.fields.IdeaID
+			const ideaTitle = ideaRecord?.fields?.IdeaTitle || "(Untitled Idea)";
+			const ideaCustomId = ideaRecord?.fields?.IdeaID;
+
 			return (
-			  <div key={ideaId} className="mb-4 p-3 border rounded">
-				{/* Show Idea Title, link to /ideas/:customIdeaId if you want */}
-				{idea ? (
+			  <div key={ideaCustomId} className="mb-4 p-3 border rounded">
+				{ideaRecord ? (
 				  <Link
-					to={`/ideas/${idea.fields.IdeaID}`}
+					to={`/ideas/${ideaCustomId}`}
 					className="text-blue-600 underline font-semibold"
 				  >
 					{ideaTitle}
 				  </Link>
 				) : (
+				  // If there's no matching Idea record in Airtable, fallback
 				  <strong>{ideaTitle}</strong>
 				)}
 
 				<ul className="mt-2 list-disc list-inside">
 				  {tasksForIdea.map((task) => {
 					const isCompleted = task.fields.Completed || false;
-					const completedTime = task.fields.CompletedTime || null;
 					return (
-					  <li key={task.id} className={isCompleted ? "line-through" : ""}>
-						{task.fields.TaskName}
-						{isCompleted && completedTime && (
-						  <span className="ml-2 text-sm text-gray-500">
-							(Done {new Date(completedTime).toLocaleString()})
-						  </span>
-						)}
+					  <li
+						key={task.id}
+						className={isCompleted ? "line-through text-gray-500" : ""}
+					  >
+						{task.fields.TaskName || "(Untitled Task)"}
 					  </li>
 					);
 				  })}

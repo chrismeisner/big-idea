@@ -3,13 +3,12 @@
 import React, { useEffect, useState } from "react";
 import { getAuth } from "firebase/auth";
 import { Link } from "react-router-dom";
-import airtableBase from "./airtable"; // your configured Airtable instance
+import airtableBase from "./airtable";
 
 function Milestones() {
   const [milestones, setMilestones] = useState([]);
-  const [tasks, setTasks] = useState([]); // NEW: We'll store all tasks here
+  const [tasks, setTasks] = useState([]);
 
-  // Form fields
   const [newMilestoneName, setNewMilestoneName] = useState("");
   const [newMilestoneTime, setNewMilestoneTime] = useState("");
   const [newMilestoneNotes, setNewMilestoneNotes] = useState("");
@@ -17,14 +16,10 @@ function Milestones() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Environment variables
+  // Env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // --------------------------------------------------------------------------
-  // 1) Fetch all Milestones & all Tasks on mount
-  //    We do it in one effect so we only set loading/error states once.
-  // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchData = async () => {
 	  if (!baseId || !apiKey) {
@@ -44,7 +39,7 @@ function Milestones() {
 
 		setLoading(true);
 
-		// 1) Fetch Milestones, sorted by Created desc
+		// 1) Fetch Milestones
 		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones?sort[0][field]=Created&sort[0][direction]=desc`,
 		  {
@@ -52,11 +47,13 @@ function Milestones() {
 		  }
 		);
 		if (!milestonesResp.ok) {
-		  throw new Error(`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`);
+		  throw new Error(
+			`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`
+		  );
 		}
 		const milestonesData = await milestonesResp.json();
 
-		// 2) Fetch ALL tasks, so we can filter them by MilestoneID
+		// 2) Fetch Tasks
 		const tasksResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Tasks`,
 		  {
@@ -64,16 +61,17 @@ function Milestones() {
 		  }
 		);
 		if (!tasksResp.ok) {
-		  throw new Error(`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`);
+		  throw new Error(
+			`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+		  );
 		}
 		const tasksData = await tasksResp.json();
 
-		// Update state
 		setMilestones(milestonesData.records);
 		setTasks(tasksData.records);
 	  } catch (err) {
 		console.error("Error fetching milestones/tasks:", err);
-		setError("Failed to fetch milestones or tasks. Please try again.");
+		setError("Failed to fetch milestones. Please try again.");
 	  } finally {
 		setLoading(false);
 	  }
@@ -82,9 +80,6 @@ function Milestones() {
 	fetchData();
   }, [baseId, apiKey]);
 
-  // --------------------------------------------------------------------------
-  // 2) Create a new Milestone => prepend it to the list
-  // --------------------------------------------------------------------------
   const handleCreateMilestone = async (e) => {
 	e.preventDefault();
 	if (!newMilestoneName.trim()) return;
@@ -105,18 +100,13 @@ function Milestones() {
 	  const fieldsToWrite = {
 		MilestoneName: newMilestoneName,
 	  };
-
-	  // If user provided a date/time, store it
 	  if (newMilestoneTime) {
 		fieldsToWrite.MilestoneTime = newMilestoneTime;
 	  }
-
-	  // If user provided notes
 	  if (newMilestoneNotes.trim()) {
 		fieldsToWrite.MilestoneNotes = newMilestoneNotes;
 	  }
 
-	  // Make the POST request to Airtable
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Milestones`, {
 		method: "POST",
 		headers: {
@@ -143,10 +133,8 @@ function Milestones() {
 	  const createdRecord = data.records[0];
 	  console.log("Milestone created:", createdRecord);
 
-	  // Prepend the newly created milestone
 	  setMilestones((prev) => [createdRecord, ...prev]);
 
-	  // Clear the inputs
 	  setNewMilestoneName("");
 	  setNewMilestoneTime("");
 	  setNewMilestoneNotes("");
@@ -156,9 +144,6 @@ function Milestones() {
 	}
   };
 
-  // --------------------------------------------------------------------------
-  // Render
-  // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading milestones...</p>;
   }
@@ -175,7 +160,10 @@ function Milestones() {
 	  <h2 className="text-2xl font-bold mt-4">All Milestones</h2>
 
 	  {/* Create Milestone form */}
-	  <form onSubmit={handleCreateMilestone} className="my-4 p-4 border rounded bg-gray-50">
+	  <form
+		onSubmit={handleCreateMilestone}
+		className="my-4 p-4 border rounded bg-gray-50"
+	  >
 		<label
 		  htmlFor="newMilestoneName"
 		  className="block text-sm font-medium mb-1"
@@ -232,18 +220,18 @@ function Milestones() {
 	  {milestones.length > 0 ? (
 		<ul className="divide-y divide-gray-200 border rounded">
 		  {milestones.map((m) => {
-			const { MilestoneName, MilestoneTime } = m.fields;
+			const { MilestoneName, MilestoneTime, MilestoneID } = m.fields;
 
-			// Filter tasks for this milestone
+			// Filter tasks that have fields.MilestoneID === m.fields.MilestoneID
 			const tasksForThisMilestone = tasks.filter(
-			  (t) => t.fields.MilestoneID === m.id
+			  (t) => t.fields.MilestoneID === MilestoneID
 			);
 
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
-				{/* Link to the milestone's detail page */}
+				{/* LINK using the custom formula "MilestoneID" instead of m.id */}
 				<Link
-				  to={`/milestones/${m.id}`}
+				  to={`/milestones/${MilestoneID}`}
 				  className="text-blue-600 underline font-semibold"
 				>
 				  {MilestoneName || "(Untitled)"}
@@ -254,12 +242,12 @@ function Milestones() {
 				  </span>
 				)}
 
-				{/* Hide MilestoneNotes here, but show the tasks that reference this milestone */}
 				{tasksForThisMilestone.length > 0 ? (
-				  <ul className="mt-2 pl-5 list-disc text-sm text-gray-800">
+				  <ul className="mt-2 pl-4 list-disc text-sm">
 					{tasksForThisMilestone.map((task) => {
 					  const taskName = task.fields.TaskName || "(Untitled Task)";
 					  const isCompleted = task.fields.Completed;
+
 					  return (
 						<li key={task.id}>
 						  {isCompleted ? (

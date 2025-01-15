@@ -12,8 +12,8 @@ import IdeaDetail from "./IdeaDetail";
 import TodayView from "./TodayView";
 import Milestones from "./Milestones";
 
-// NEW IMPORT: the new MilestoneDetail component
-import MilestoneDetail from "./MilestoneDetail";
+// NEW IMPORT: now the MilestoneDetail that uses the custom ID approach
+import MilestoneDetail from "./MilestoneDetail"; // updated to use custom ID
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -79,17 +79,20 @@ function App() {
           }
         />
 
-        {/* /ideas/:customIdeaId (show IdeaDetail) */}
+        {/* /ideas/:customIdeaId => IdeaDetail */}
         <Route path="/ideas/:customIdeaId" element={<IdeaDetail />} />
 
         {/* /today => TodayView */}
         <Route path="/today" element={<TodayView />} />
 
-        {/* /milestones => Milestones page */}
+        {/* /milestones => Milestones overview page */}
         <Route path="/milestones" element={<Milestones />} />
 
-        {/* NEW ROUTE: /milestones/:milestoneId => MilestoneDetail */}
-        <Route path="/milestones/:milestoneId" element={<MilestoneDetail />} />
+        {/* NEW: /milestones/:milestoneCustomId => MilestoneDetail by custom ID */}
+        <Route
+          path="/milestones/:milestoneCustomId"
+          element={<MilestoneDetail />}
+        />
       </Routes>
     </Router>
   );
