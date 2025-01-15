@@ -8,8 +8,6 @@ import Login from "./Login";
 import MainContent from "./MainContent";
 import Onboarding from "./Onboarding";
 import IdeaDetail from "./IdeaDetail";
-
-// ADD THIS import for your new Today screen
 import TodayView from "./TodayView";
 
 function App() {
@@ -75,15 +73,16 @@ function App() {
             )
           }
         />
+        {/* 
+          INSTEAD of "/ideas/:ideaId", we do "/ideas/:customIdeaId"
+          This means in IdeaDetail.js, we'll read `useParams().customIdeaId`
+        */}
+        <Route path="/ideas/:customIdeaId" element={<IdeaDetail />} />
 
-        {/* Detail view for a single idea */}
-        <Route path="/ideas/:ideaId" element={<IdeaDetail />} />
-
-        {/* NEW ROUTE for TodayView */}
         <Route path="/today" element={<TodayView />} />
       </Routes>
     </Router>
   );
 }
 
-export default App;
+export default App; 

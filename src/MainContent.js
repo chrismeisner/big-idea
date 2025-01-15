@@ -18,6 +18,7 @@ function chunkArray(arr, size) {
 function MainContent() {
   const [ideas, setIdeas] = useState([]);
   const [tasks, setTasks] = useState([]);
+  const [milestones, setMilestones] = useState([]); // now referencing tasks via TaskID
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -38,11 +39,11 @@ function MainContent() {
   const sortableRef = useRef(null);
 
   // --------------------------------------------------------------------------
-  // 1) Fetch Ideas and Tasks (once on mount)
+  // 1) Fetch Ideas, Tasks, and Milestones once on mount
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchIdeasAndTasks = async () => {
-	  console.log("Fetching ideas and tasks...");
+	  console.log("Fetching ideas, tasks, and milestones...");
 	  setLoading(true);
 	  setError(null);
 
@@ -79,6 +80,7 @@ function MainContent() {
 		const ideasData = await ideasResp.json();
 		console.log("Fetched ideas: ", ideasData.records);
 
+		// Filter ideas by logged-in user’s phone number (if you store it)
 		const userPhoneNumber = currentUser.phoneNumber;
 		const userIdeas = ideasData.records.filter(
 		  (rec) => rec.fields.UserMobile === userPhoneNumber
@@ -86,7 +88,7 @@ function MainContent() {
 		console.log("Filtered ideas for user:", userPhoneNumber, userIdeas);
 		setIdeas(userIdeas);
 
-		// Fetch tasks
+		// Fetch Tasks (no changes needed; these still reference IdeaID)
 		console.log("Fetching tasks from Airtable...");
 		const tasksResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Tasks`,
@@ -104,6 +106,25 @@ function MainContent() {
 		const tasksData = await tasksResp.json();
 		console.log("Fetched tasks: ", tasksData.records);
 		setTasks(tasksData.records);
+
+		// Fetch Milestones (each milestone now references a Task via TaskID)
+		console.log("Fetching milestones from Airtable...");
+		const milestonesResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Milestones`,
+		  {
+			headers: {
+			  Authorization: `Bearer ${apiKey}`,
+			},
+		  }
+		);
+		if (!milestonesResp.ok) {
+		  throw new Error(
+			`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`
+		  );
+		}
+		const milestonesData = await milestonesResp.json();
+		console.log("Fetched milestones: ", milestonesData.records);
+		setMilestones(milestonesData.records);
 	  } catch (err) {
 		console.error("Error fetching data from Airtable:", err);
 		setError("Failed to fetch data. Please try again later.");
@@ -113,21 +134,14 @@ function MainContent() {
 	};
 
 	fetchIdeasAndTasks();
-	// If your baseId/apiKey can change, add them as dependencies
-	// }, [baseId, apiKey]);
-  }, []);
+  }, [baseId, apiKey]);
 
   // --------------------------------------------------------------------------
   // 2) Initialize Sortable after ideas are loaded
   // --------------------------------------------------------------------------
   useEffect(() => {
-	if (
-	  !loading &&
-	  ideas.length > 0 &&
-	  ideasListRef.current &&
-	  !sortableRef.current
-	) {
-	  console.log("Initializing Sortable.js");
+	if (!loading && ideas.length > 0 && ideasListRef.current && !sortableRef.current) {
+	  console.log("Initializing Sortable.js for Ideas");
 	  sortableRef.current = new Sortable(ideasListRef.current, {
 		animation: 150,
 		handle: ".grab-idea-handle",
@@ -151,7 +165,7 @@ function MainContent() {
   }, []);
 
   // --------------------------------------------------------------------------
-  // 4) Reorder: local + patch Airtable
+  // 4) Reorder local + patch Airtable
   // --------------------------------------------------------------------------
   const handleSortEnd = async (evt) => {
 	console.log("Drag ended:", evt);
@@ -183,14 +197,13 @@ function MainContent() {
   };
 
   // --------------------------------------------------------------------------
-  // Update multiple ideas' Order in Airtable (with chunking)
+  // 4a) Patch multiple ideas' Order in Airtable (with chunking)
   // --------------------------------------------------------------------------
   const updateIdeasOrderInAirtable = async (list) => {
 	if (!baseId || !apiKey) {
 	  throw new Error("Missing Airtable credentials for reorder update");
 	}
 
-	// Prepare an array of record objects
 	const toUpdate = list.map((idea) => ({
 	  id: idea.id,
 	  fields: {
@@ -198,12 +211,9 @@ function MainContent() {
 	  },
 	}));
 
-	// Airtable only allows up to 10 records per request
 	const chunks = chunkArray(toUpdate, 10);
-
 	for (const chunk of chunks) {
 	  console.log("Patching chunk to Airtable:", chunk);
-
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "PATCH",
 		headers: {
@@ -215,7 +225,6 @@ function MainContent() {
 		  typecast: true,
 		}),
 	  });
-
 	  if (!resp.ok) {
 		let errorBody;
 		try {
@@ -223,7 +232,7 @@ function MainContent() {
 		} catch {
 		  errorBody = {};
 		}
-		console.error("Airtable returned an error body:", errorBody);
+		console.error("Airtable error body:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	}
@@ -251,7 +260,7 @@ function MainContent() {
 		return;
 	  }
 
-	  // 1) Shift all existing ideas' Order by +1 locally
+	  // 1) Shift all existing ideas' Order by +1
 	  const shifted = ideas.map((idea) => ({
 		...idea,
 		fields: {
@@ -260,12 +269,12 @@ function MainContent() {
 		},
 	  }));
 
-	  // 2) Update them in Airtable
+	  // 2) Patch them in Airtable
 	  if (shifted.length > 0) {
 		await updateIdeasOrderInAirtable(shifted);
 	  }
 
-	  // 3) Create the new idea with Order = 1
+	  // 3) Create the new idea with Order=1
 	  const userPhoneNumber = currentUser.phoneNumber;
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "POST",
@@ -302,7 +311,7 @@ function MainContent() {
 	  const createdRecord = data.records[0];
 	  console.log("New idea created in Airtable:", createdRecord);
 
-	  // 4) Prepend the new idea to local state, and include the shifted ideas
+	  // 4) Prepend the new idea in local state
 	  setIdeas([createdRecord, ...shifted]);
 
 	  // Clear input fields
@@ -336,7 +345,7 @@ function MainContent() {
 	}
 
 	try {
-	  // 1) Fetch all tasks for this Idea
+	  // 1) Fetch all tasks referencing this Idea
 	  const tasksResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"`,
 		{
@@ -350,22 +359,17 @@ function MainContent() {
 		  `Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
 		);
 	  }
-
 	  const tasksData = await tasksResp.json();
-	  const taskRecords = tasksData.records; // all tasks belonging to the idea
+	  const taskRecords = tasksData.records;
+	  console.log(`Found ${taskRecords.length} tasks for Idea ${ideaId}.`);
 
-	  // 2) Batch-delete the tasks (in chunks of 10, if any)
+	  // 2) Batch-delete the tasks (in chunks of 10)
 	  if (taskRecords.length > 0) {
 		const taskChunks = chunkArray(taskRecords, 10);
-
 		for (const chunk of taskChunks) {
 		  const idsToDelete = chunk.map((rec) => rec.id);
 		  const deleteUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
-
-		  // Append multiple "records[]" params to the query string
-		  idsToDelete.forEach((id) =>
-			deleteUrl.searchParams.append("records[]", id)
-		  );
+		  idsToDelete.forEach((id) => deleteUrl.searchParams.append("records[]", id));
 
 		  const deleteResp = await fetch(deleteUrl.toString(), {
 			method: "DELETE",
@@ -373,7 +377,6 @@ function MainContent() {
 			  Authorization: `Bearer ${apiKey}`,
 			},
 		  });
-
 		  if (!deleteResp.ok) {
 			throw new Error(
 			  `Airtable error: ${deleteResp.status} ${deleteResp.statusText}`
@@ -382,7 +385,7 @@ function MainContent() {
 		}
 	  }
 
-	  // 3) Now delete the Idea
+	  // 3) Delete the Idea record
 	  const resp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
 		{
@@ -403,8 +406,7 @@ function MainContent() {
 		delete nextConfirm[ideaId];
 		return nextConfirm;
 	  });
-
-	  console.log(`Idea ${ideaId} and its tasks are deleted from Airtable.`);
+	  console.log(`Idea ${ideaId} and its tasks are deleted.`);
 	} catch (err) {
 	  console.error("Error deleting idea or its tasks:", err);
 	  setError("Failed to delete the idea and its tasks. Please try again.");
@@ -412,10 +414,15 @@ function MainContent() {
   }
 
   // --------------------------------------------------------------------------
-  // 7) Create a new Task (unchanged logic, still includes Completed=false, etc.)
+  // 7) Create a new Task => store the custom IdeaID as well
   // --------------------------------------------------------------------------
-  const createTask = async (ideaId, taskName) => {
-	console.log("Creating task for idea:", ideaId, "Task name:", taskName);
+  const createTask = async (ideaCustomId, taskName) => {
+	console.log(
+	  "Creating task for idea custom ID:",
+	  ideaCustomId,
+	  "Task name:",
+	  taskName
+	);
 
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
@@ -436,7 +443,8 @@ function MainContent() {
 			{
 			  fields: {
 				TaskName: taskName,
-				IdeaID: ideaId,
+				// store the custom ID in the "IdeaID" field
+				IdeaID: ideaCustomId,
 				Order: orderValue,
 				Completed: false,
 				CompletedTime: null,
@@ -454,7 +462,7 @@ function MainContent() {
 		} catch {
 		  errorBody = {};
 		}
-		console.error("Airtable returned an error body:", errorBody);
+		console.error("Airtable error body:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
@@ -471,7 +479,7 @@ function MainContent() {
   };
 
   // --------------------------------------------------------------------------
-  // Render UI
+  // Render
   // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading your ideas...</p>;
@@ -484,7 +492,7 @@ function MainContent() {
 	<div className="max-w-md mx-auto px-4 py-6">
 	  <h2 className="text-2xl font-bold mb-4">Your Ideas</h2>
 
-	  {/* Create Idea */}
+	  {/* Create Idea form */}
 	  <form
 		onSubmit={handleCreateIdea}
 		className="mb-6 p-4 border rounded bg-gray-100"
@@ -528,10 +536,11 @@ function MainContent() {
 		</button>
 	  </form>
 
-	  {/* Idea List (child component) */}
+	  {/* Idea List */}
 	  <IdeaList
 		ideas={ideas}
 		tasks={tasks}
+		milestones={milestones} // passing all milestones; we'll link them via TaskID later
 		ideasListRef={ideasListRef}
 		hoveredIdeaId={hoveredIdeaId}
 		setHoveredIdeaId={setHoveredIdeaId}

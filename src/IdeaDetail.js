@@ -1,7 +1,6 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/IdeaDetail.js
 // File: /src/IdeaDetail.js
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useState, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
@@ -10,6 +9,7 @@ import { Bars3Icon } from "@heroicons/react/24/outline";
 function IdeaDetail() {
   const [idea, setIdea] = useState(null);
   const [tasks, setTasks] = useState([]);
+  const [milestones, setMilestones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -20,20 +20,21 @@ function IdeaDetail() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
 
-  // We'll reference one UL for top-level tasks, plus one UL per parent's subtasks
+  // Refs for Sortable
   const topLevelRef = useRef(null);
   const topLevelSortableRef = useRef(null);
-
-  // We'll store references for each parent's subtask UL
   const subtaskRefs = useRef({});
   const subtaskSortableRefs = useRef({});
 
-  const { ideaId } = useParams();
+  // Param from react-router
+  const { customIdeaId } = useParams();
+
+  // Airtable environment variables
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   // --------------------------------------------------------------------------
-  // 1) Fetch Idea + tasks => sorted by "Order" then "SubOrder"
+  // 1) Fetch Idea, Tasks, and Milestones
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchData = async () => {
@@ -42,7 +43,6 @@ function IdeaDetail() {
 		setLoading(false);
 		return;
 	  }
-
 	  try {
 		const auth = getAuth();
 		const currentUser = auth.currentUser;
@@ -51,40 +51,54 @@ function IdeaDetail() {
 		  setLoading(false);
 		  return;
 		}
-
 		setLoading(true);
 
-		// 1) Fetch the Idea record
+		// A) Fetch the single Idea record
 		const ideaResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
+		  `https://api.airtable.com/v0/${baseId}/Ideas?filterByFormula={IdeaID}="${customIdeaId}"`,
+		  { headers: { Authorization: `Bearer ${apiKey}` } }
 		);
 		if (!ideaResp.ok) {
 		  throw new Error(
-			`Airtable error: ${ideaResp.status} ${ideaResp.statusText}`
+			`Airtable error (Idea): ${ideaResp.status} ${ideaResp.statusText}`
 		  );
 		}
 		const ideaData = await ideaResp.json();
-		setIdea(ideaData);
+		if (ideaData.records.length === 0) {
+		  setError(`No Idea found for custom ID: ${customIdeaId}`);
+		  setLoading(false);
+		  return;
+		}
+		const foundIdea = ideaData.records[0];
+		setIdea(foundIdea);
 
-		// 2) Fetch tasks => sorted by Order, then SubOrder
+		// B) Fetch Tasks for this Idea
 		const tasksResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"&sort[0][field]=Order&sort[0][direction]=asc&sort[1][field]=SubOrder&sort[1][direction]=asc`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
+		  `https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${customIdeaId}"&sort[0][field]=Order&sort[0][direction]=asc&sort[1][field]=SubOrder&sort[1][direction]=asc`,
+		  { headers: { Authorization: `Bearer ${apiKey}` } }
 		);
 		if (!tasksResp.ok) {
 		  throw new Error(
-			`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+			`Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
 		  );
 		}
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
+
+		// C) Fetch ALL Milestones (which reference a Task by TaskID)
+		const milestonesResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Milestones`,
+		  { headers: { Authorization: `Bearer ${apiKey}` } }
+		);
+		if (!milestonesResp.ok) {
+		  throw new Error(
+			`Airtable error (Milestones): ${milestonesResp.status} ${milestonesResp.statusText}`
+		  );
+		}
+		const milestonesData = await milestonesResp.json();
+		setMilestones(milestonesData.records);
 	  } catch (err) {
-		console.error("Error fetching idea or tasks:", err);
+		console.error("Error fetching idea/tasks/milestones:", err);
 		setError("Failed to fetch idea details. Please try again.");
 	  } finally {
 		setLoading(false);
@@ -92,22 +106,28 @@ function IdeaDetail() {
 	};
 
 	fetchData();
-  }, [baseId, apiKey, ideaId]);
+  }, [baseId, apiKey, customIdeaId]);
 
   // --------------------------------------------------------------------------
-  // 2) Sortable for top-level tasks => reorder by "Order"
+  // 2) Sortable for top-level tasks
   // --------------------------------------------------------------------------
-  useEffect(() => {
-	if (!topLevelRef.current || tasks.length === 0) return;
+  useLayoutEffect(() => {
+	if (!topLevelRef.current) return;
 
-	if (!topLevelSortableRef.current) {
-	  topLevelSortableRef.current = new Sortable(topLevelRef.current, {
-		animation: 150,
-		handle: ".grab-handle",
-		onEnd: handleTopLevelSortEnd,
-	  });
+	// Destroy old instance if any
+	if (topLevelSortableRef.current) {
+	  topLevelSortableRef.current.destroy();
+	  topLevelSortableRef.current = null;
 	}
 
+	// Initialize
+	topLevelSortableRef.current = new Sortable(topLevelRef.current, {
+	  animation: 150,
+	  handle: ".grab-handle",
+	  onEnd: handleTopLevelSortEnd,
+	});
+
+	// Cleanup
 	return () => {
 	  if (topLevelSortableRef.current) {
 		topLevelSortableRef.current.destroy();
@@ -120,7 +140,6 @@ function IdeaDetail() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// Separate top-level from sub tasks
 	const topLevel = tasks.filter((t) => !t.fields.ParentTask);
 	const subTasks = tasks.filter((t) => t.fields.ParentTask);
 
@@ -137,11 +156,11 @@ function IdeaDetail() {
 	  parent.fields.Order = idx + 1;
 	});
 
-	// Merge back
+	// Merge with all subtasks
 	const merged = [...updated, ...subTasks];
 	setTasks(merged);
 
-	// Patch top-level tasks to Airtable
+	// Update Airtable
 	try {
 	  await patchTopLevelOrder(updated);
 	} catch (err) {
@@ -172,24 +191,29 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 3) Sortable for each parent's subtasks => reorder by "SubOrder"
+  // 3) Sortable for each parent's subtasks
   // --------------------------------------------------------------------------
-  useEffect(() => {
-	// For each parent
+  useLayoutEffect(() => {
+	// Destroy existing subtask Sortables
+	Object.values(subtaskSortableRefs.current).forEach((sortable) => {
+	  if (sortable) sortable.destroy();
+	});
+	subtaskSortableRefs.current = {};
+
+	// Re-init for each top-level parent
 	const topLevelTasks = tasks.filter((t) => !t.fields.ParentTask);
 	topLevelTasks.forEach((parent) => {
-	  const parentId = parent.id; // actual record ID in Airtable
+	  const parentId = parent.id;
 	  const el = subtaskRefs.current[parentId];
 	  if (!el) return;
-	  if (!subtaskSortableRefs.current[parentId]) {
-		subtaskSortableRefs.current[parentId] = new Sortable(el, {
-		  animation: 150,
-		  handle: ".sub-grab-handle",
-		  onEnd: (evt) => handleSubtaskSortEnd(evt, parent),
-		});
-	  }
+	  subtaskSortableRefs.current[parentId] = new Sortable(el, {
+		animation: 150,
+		handle: ".sub-grab-handle",
+		onEnd: (evt) => handleSubtaskSortEnd(evt, parent),
+	  });
 	});
 
+	// Cleanup
 	return () => {
 	  Object.values(subtaskSortableRefs.current).forEach((sortable) => {
 		if (sortable) sortable.destroy();
@@ -202,7 +226,7 @@ function IdeaDetail() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	const parentID = parentTask.fields.TaskID; // parent's unique TaskID
+	const parentID = parentTask.fields.TaskID;
 	const subArray = tasks.filter((t) => t.fields.ParentTask === parentID);
 	const others = tasks.filter((t) => t.fields.ParentTask !== parentID);
 
@@ -214,16 +238,14 @@ function IdeaDetail() {
 	if (!moved) return;
 	updated.splice(newIndex, 0, moved);
 
-	// reassign "SubOrder"
+	// Reassign "SubOrder"
 	updated.forEach((sub, idx) => {
 	  sub.fields.SubOrder = idx + 1;
 	});
 
-	// merge
 	const merged = [...others, ...updated];
 	setTasks(merged);
 
-	// Patch to Airtable
 	try {
 	  await patchSubtaskOrder(updated);
 	} catch (err) {
@@ -234,13 +256,12 @@ function IdeaDetail() {
 
   const patchSubtaskOrder = async (subArray) => {
 	if (!baseId || !apiKey) {
-	  throw new Error("Missing Airtable credentials for subtasks reorder");
+	  throw new Error("Missing Airtable credentials.");
 	}
 	const records = subArray.map((sub) => ({
 	  id: sub.id,
 	  fields: { SubOrder: sub.fields.SubOrder },
 	}));
-
 	const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 	  method: "PATCH",
 	  headers: {
@@ -258,6 +279,7 @@ function IdeaDetail() {
   // 4) CREATE top-level or sub
   // --------------------------------------------------------------------------
   const createTask = async (taskName) => {
+	if (!idea) return;
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
@@ -270,6 +292,7 @@ function IdeaDetail() {
 		return;
 	  }
 	  const newOrderValue = tasks.length + 1;
+	  const customID = idea.fields.IdeaID;
 
 	  const response = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Tasks`,
@@ -284,7 +307,7 @@ function IdeaDetail() {
 			  {
 				fields: {
 				  TaskName: taskName,
-				  IdeaID: ideaId,
+				  IdeaID: customID,
 				  Order: newOrderValue,
 				  SubOrder: 0,
 				  Completed: false,
@@ -299,7 +322,7 @@ function IdeaDetail() {
 	  );
 	  if (!response.ok) {
 		throw new Error(
-		  `Airtable error: ${response.status} ${response.statusText}`
+		  `Airtable error (createTask): ${response.status} ${response.statusText}`
 		);
 	  }
 	  const data = await response.json();
@@ -312,6 +335,7 @@ function IdeaDetail() {
   };
 
   const createSubtask = async (parentTask) => {
+	if (!idea) return;
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
@@ -323,6 +347,7 @@ function IdeaDetail() {
 		setError("No logged-in user.");
 		return;
 	  }
+	  const customID = idea.fields.IdeaID;
 	  const newSubOrderVal = tasks.length + 1;
 	  const parentID = parentTask.fields.TaskID;
 
@@ -339,7 +364,7 @@ function IdeaDetail() {
 			  {
 				fields: {
 				  TaskName: "New subtask...",
-				  IdeaID: ideaId,
+				  IdeaID: customID,
 				  Order: 0,
 				  SubOrder: newSubOrderVal,
 				  Completed: false,
@@ -354,7 +379,7 @@ function IdeaDetail() {
 	  );
 	  if (!response.ok) {
 		throw new Error(
-		  `Airtable error: ${response.status} ${response.statusText}`
+		  `Airtable error (createSubtask): ${response.status} ${response.statusText}`
 		);
 	  }
 	  const data = await response.json();
@@ -380,11 +405,9 @@ function IdeaDetail() {
 
   const commitEdit = async (taskId) => {
 	if (editingTaskName.trim().toUpperCase() === "XXX") {
-	  // If user typed "XXX", we delete + orphan children
 	  await handleDeleteTask(taskId);
 	  return;
 	}
-	// Otherwise just rename
 	await handleEditSave(taskId, editingTaskName);
   };
 
@@ -394,26 +417,15 @@ function IdeaDetail() {
   };
 
   const handleEditSave = async (taskId, newName) => {
-	// local rename
-	const updated = tasks.map((t) => {
-	  if (t.id === taskId) {
-		return {
-		  ...t,
-		  fields: {
-			...t.fields,
-			TaskName: newName,
-		  },
-		};
-	  }
-	  return t;
-	});
+	const updated = tasks.map((t) =>
+	  t.id === taskId
+		? { ...t, fields: { ...t.fields, TaskName: newName } }
+		: t
+	);
 	setTasks(updated);
-
-	// clear editing
 	setEditingTaskId(null);
 	setEditingTaskName("");
 
-	// patch
 	try {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
@@ -446,70 +458,58 @@ function IdeaDetail() {
   // 6) handleDeleteTask => Remove parent, orphan children
   // --------------------------------------------------------------------------
   const handleDeleteTask = async (taskId) => {
-	// 1) locate the parent's unique TaskID
-	const taskToDelete = tasks.find((t) => t.id === taskId);
-	if (!taskToDelete) return;
+	const toDelete = tasks.find((t) => t.id === taskId);
+	if (!toDelete) return;
 
-	const parentUniqueID = taskToDelete.fields.TaskID; 
-	// e.g. "task_abc123"
+	const parentUniqueID = toDelete.fields.TaskID;
 
-	// 2) remove from local state immediately
+	// remove parent from local
 	setTasks((prev) => prev.filter((t) => t.id !== taskId));
 
-	// 3) find child tasks referencing the parent's TaskID
-	const childTasks = tasks.filter(
-	  (t) => t.fields.ParentTask === parentUniqueID
-	);
-
-	// 3a) patch them in Airtable => clear out ParentTask
+	// locate child tasks referencing parent's TaskID => clear their ParentTask
+	const childTasks = tasks.filter((t) => t.fields.ParentTask === parentUniqueID);
 	if (childTasks.length > 0) {
 	  try {
 		const recordsToPatch = childTasks.map((ct) => ({
 		  id: ct.id,
-		  fields: {
-			ParentTask: "", // or null
-		  },
+		  fields: { ParentTask: "" },
 		}));
 
 		const chunkSize = 10;
 		for (let i = 0; i < recordsToPatch.length; i += chunkSize) {
 		  const chunk = recordsToPatch.slice(i, i + chunkSize);
-		  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-			method: "PATCH",
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			  "Content-Type": "application/json",
-			},
-			body: JSON.stringify({ records: chunk }),
-		  });
+		  const patchResp = await fetch(
+			`https://api.airtable.com/v0/${baseId}/Tasks`,
+			{
+			  method: "PATCH",
+			  headers: {
+				Authorization: `Bearer ${apiKey}`,
+				"Content-Type": "application/json",
+			  },
+			  body: JSON.stringify({ records: chunk }),
+			}
+		  );
 		  if (!patchResp.ok) {
 			throw new Error(
-			  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+			  `Airtable error (clear children): ${patchResp.status} ${patchResp.statusText}`
 			);
 		  }
 		}
 
-		// also update local state => remove ParentTask from those child tasks
+		// Update local
 		setTasks((prev) =>
 		  prev.map((ct) =>
 			ct.fields.ParentTask === parentUniqueID
-			  ? {
-				  ...ct,
-				  fields: {
-					...ct.fields,
-					ParentTask: "",
-				  },
-				}
+			  ? { ...ct, fields: { ...ct.fields, ParentTask: "" } }
 			  : ct
 		  )
 		);
 	  } catch (err) {
 		console.error("Error removing ParentTask from child tasks:", err);
-		// optional: revert local if needed
 	  }
 	}
 
-	// 4) now delete the parent from Airtable
+	// Now delete from Airtable
 	try {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
@@ -524,7 +524,6 @@ function IdeaDetail() {
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
-	  console.log(`Record ${taskId} deleted (due to 'XXX'), children are now orphaned.`);
 	} catch (err) {
 	  console.error("Error deleting task from Airtable:", err);
 	  setError("Failed to delete the task from Airtable.");
@@ -539,7 +538,6 @@ function IdeaDetail() {
 	const newValue = !wasCompleted;
 	const newTime = newValue ? new Date().toISOString() : null;
 
-	// optimistic UI
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -555,7 +553,6 @@ function IdeaDetail() {
 	  )
 	);
 
-	// patch
 	try {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
@@ -610,7 +607,6 @@ function IdeaDetail() {
 	const wasToday = task.fields.Today || false;
 	const newValue = !wasToday;
 
-	// local update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -619,7 +615,6 @@ function IdeaDetail() {
 	  )
 	);
 
-	// patch
 	try {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
@@ -661,30 +656,82 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 8) Group tasks => top-level vs. subtasks
+  // 8) Organize tasks: top-level vs. sub-tasks
   // --------------------------------------------------------------------------
   const topLevelTasks = tasks.filter((t) => !t.fields.ParentTask);
-  // Group sub tasks by parent
-  const subtasksByParent = tasks.reduce((acc, t) => {
-	const parent = t.fields.ParentTask;
-	if (parent) {
-	  if (!acc[parent]) acc[parent] = [];
-	  acc[parent].push(t);
-	}
-	return acc;
-  }, {});
 
-  // Sort sub tasks by "SubOrder"
-  Object.keys(subtasksByParent).forEach((pID) => {
-	subtasksByParent[pID].sort(
-	  (a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0)
-	);
+  // Build a quick subtask map
+  const subtasksByParent = {};
+  tasks.forEach((t) => {
+	const p = t.fields.ParentTask;
+	if (p) {
+	  if (!subtasksByParent[p]) subtasksByParent[p] = [];
+	  subtasksByParent[p].push(t);
+	}
   });
 
-  // Also sort top-level by "Order"
-  topLevelTasks.sort(
-	(a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
+  // Sort them
+  topLevelTasks.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
+  Object.values(subtasksByParent).forEach((arr) =>
+	arr.sort((x, y) => (x.fields.SubOrder || 0) - (y.fields.SubOrder || 0))
   );
+
+  // --------------------------------------------------------------------------
+  // 9) Helper: Get Milestones for a given Task (matching TaskID)
+  // --------------------------------------------------------------------------
+  const getMilestonesForTask = (taskRecord) => {
+	const thisTaskID = taskRecord.fields.TaskID; // unique text ID
+	return milestones.filter((m) => m.fields.TaskID === thisTaskID);
+  };
+
+  // --------------------------------------------------------------------------
+  // 10) NEW: Gather *all* Milestones for this Idea & show at the top
+  // --------------------------------------------------------------------------
+  // We can flatten all tasks => gather all associated milestones => unique array
+  const allIdeaMilestones = tasks.flatMap((t) => getMilestonesForTask(t));
+
+  // Optional: Sort milestones by date/time ascending
+  allIdeaMilestones.sort((a, b) => {
+	const aTime = a.fields.MilestoneTime
+	  ? new Date(a.fields.MilestoneTime).getTime()
+	  : 0;
+	const bTime = b.fields.MilestoneTime
+	  ? new Date(b.fields.MilestoneTime).getTime()
+	  : 0;
+	return aTime - bTime;
+  });
+
+  // Simple helper to get a “countdown” string (days left, hours left, etc.)
+  // For a more robust approach, you'd handle time zones, partial days, etc.
+  function getTimeLeftString(milestone) {
+	if (!milestone.fields.MilestoneTime) return "(no time set)";
+
+	const now = Date.now(); // current timestamp in ms
+	const target = new Date(milestone.fields.MilestoneTime).getTime();
+	const diffMs = target - now;
+
+	if (diffMs <= 0) {
+	  return "Expired"; // or "Passed" if it's already in the past
+	}
+
+	// In milliseconds:
+	const oneDay = 24 * 60 * 60 * 1000;
+	const oneHour = 60 * 60 * 1000;
+	const oneMin = 60 * 1000;
+
+	const daysLeft = Math.floor(diffMs / oneDay);
+	const hoursLeft = Math.floor((diffMs % oneDay) / oneHour);
+	const minsLeft = Math.floor((diffMs % oneHour) / oneMin);
+
+	if (daysLeft > 0) {
+	  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
+	} else if (hoursLeft > 0) {
+	  return `${hoursLeft} hour${hoursLeft === 1 ? "" : "s"} left`;
+	} else {
+	  // fallback to minutes
+	  return `${minsLeft} minute${minsLeft === 1 ? "" : "s"} left`;
+	}
+  }
 
   // --------------------------------------------------------------------------
   // Render
@@ -696,23 +743,56 @@ function IdeaDetail() {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
   if (!idea) {
-	return <p className="m-4">No idea found with ID {ideaId}.</p>;
+	return (
+	  <p className="m-4">
+		No idea found for custom ID: <strong>{customIdeaId}</strong>.
+	  </p>
+	);
   }
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
-	  {/* Back link */}
 	  <Link to="/" className="text-blue-500 underline">
 		&larr; Back to your ideas
 	  </Link>
 
-	  {/* Idea details */}
 	  <h2 className="text-2xl font-bold mt-4">{idea.fields.IdeaTitle}</h2>
 	  <p className="mt-2 text-gray-700">{idea.fields.IdeaSummary}</p>
 
-	  {/* Add a new top-level Task form */}
+	  {/*
+		NEW SECTION at the top: "Upcoming Milestones"
+		only shows if we have at least 1 milestone for this Idea
+	  */}
+	  {allIdeaMilestones.length > 0 && (
+		<div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
+		  <h3 className="font-semibold">Upcoming Milestones</h3>
+		  <ul className="list-disc list-inside mt-2">
+			{allIdeaMilestones.map((m) => {
+			  const milestoneName = m.fields.MilestoneName || "(untitled)";
+			  const milestoneTime = m.fields.MilestoneTime
+				? new Date(m.fields.MilestoneTime).toLocaleString()
+				: "(no date)";
+
+			  const countdown = getTimeLeftString(m);
+
+			  return (
+				<li key={m.id} className="mb-1">
+				  <strong>{milestoneName}</strong>{" "}
+				  <span className="text-sm text-gray-600">
+					(Target: {milestoneTime})
+				  </span>
+				  {" – "}
+				  <span className="text-blue-600 italic">{countdown}</span>
+				</li>
+			  );
+			})}
+		  </ul>
+		</div>
+	  )}
+
+	  {/* Add a new Task */}
 	  <form
-		className="mt-4"
+		className="mt-6"
 		onSubmit={(e) => {
 		  e.preventDefault();
 		  if (!newTaskName.trim()) return;
@@ -738,38 +818,33 @@ function IdeaDetail() {
 		</div>
 	  </form>
 
-	  {/* Tasks List => Sortable for top-level */}
-	  <h3 className="text-xl font-semibold mt-6 mb-2">Tasks for this Idea:</h3>
+	  <h3 className="text-xl font-semibold mt-6 mb-2">Tasks:</h3>
 	  {tasks.length > 0 ? (
 		<ul
 		  className="divide-y divide-gray-200 border rounded"
 		  ref={topLevelRef}
 		>
 		  {topLevelTasks.map((parent) => {
-			const childTasks = subtasksByParent[parent.fields.TaskID] || [];
-			const isEditingParent = editingTaskId === parent.id;
 			const parentCompleted = parent.fields.Completed || false;
 			const parentCompletedTime = parent.fields.CompletedTime || null;
 			const isTodayParent = parent.fields.Today || false;
 
-			// We'll store a ref callback for this parent's UL
-			const parentRefCb = (el) => {
-			  if (el) {
-				subtaskRefs.current[parent.id] = el;
-			  }
-			};
+			// Milestones for this top-level task
+			const parentMilestones = getMilestonesForTask(parent);
+
+			// Subtasks
+			const childTasks = subtasksByParent[parent.fields.TaskID] || [];
 
 			return (
 			  <li key={parent.id} className="p-4 hover:bg-gray-50">
+				{/* PARENT TASK ROW */}
 				<div className="flex items-center">
-				  {/* handle for parent */}
 				  <div
 					className="grab-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
 					title="Drag to reorder parent tasks"
 				  >
 					<Bars3Icon className="h-5 w-5" />
 				  </div>
-				  {/* Completed? */}
 				  <input
 					type="checkbox"
 					className="mr-2"
@@ -777,7 +852,7 @@ function IdeaDetail() {
 					onChange={() => handleToggleCompleted(parent)}
 				  />
 				  <div className="flex-1">
-					{isEditingParent ? (
+					{editingTaskId === parent.id ? (
 					  <input
 						autoFocus
 						className="border-b border-gray-300 focus:outline-none"
@@ -809,7 +884,6 @@ function IdeaDetail() {
 					)}
 				  </div>
 
-				  {/* "Today" checkbox if not completed */}
 				  {!parentCompleted && (
 					<div className="ml-2 flex items-center space-x-1">
 					  <input
@@ -822,80 +896,153 @@ function IdeaDetail() {
 				  )}
 				</div>
 
-				{/* Subtasks => UL ref for Sortable => reorder by "SubOrder" */}
+				{/* MILESTONES for THIS PARENT TASK */}
+				{parentMilestones.length > 0 ? (
+				  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
+					<h4 className="font-semibold text-sm">Milestones:</h4>
+					<ul className="list-disc list-inside">
+					  {parentMilestones.map((m) => (
+						<li key={m.id} className="mt-1">
+						  <span className="font-medium">
+							{m.fields.MilestoneName}
+						  </span>{" "}
+						  <span className="text-xs text-gray-500">
+							(Target:{" "}
+							{m.fields.MilestoneTime
+							  ? new Date(m.fields.MilestoneTime).toLocaleString()
+							  : "No date"}
+							)
+						  </span>
+						  {" – "}
+						  <em className="text-blue-600 text-xs">
+							{getTimeLeftString(m)}
+						  </em>
+						</li>
+					  ))}
+					</ul>
+				  </div>
+				) : (
+				  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
+					<p className="text-sm text-gray-500">No milestones yet.</p>
+				  </div>
+				)}
+
+				{/* SUBTASK LIST */}
 				{childTasks.length > 0 && (
 				  <ul
-					ref={parentRefCb}
+					ref={(el) => (subtaskRefs.current[parent.id] = el)}
 					className="ml-6 mt-2 border-l border-gray-200"
 				  >
 					{childTasks.map((sub) => {
-					  const isEditingSub = editingTaskId === sub.id;
 					  const subCompleted = sub.fields.Completed || false;
 					  const subCompletedTime = sub.fields.CompletedTime || null;
-					  // if you want to show sub's "Today" as well, optional
+
+					  // Milestones for this subtask
+					  const subMilestones = getMilestonesForTask(sub);
 
 					  return (
 						<li
 						  key={sub.id}
-						  className="py-2 pl-3 hover:bg-gray-50 flex items-center"
+						  className="py-2 pl-3 hover:bg-gray-50"
 						>
-						  {/* handle for subtask => reorder by SubOrder */}
-						  <div
-							className="sub-grab-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
-							title="Drag to reorder subtasks"
-						  >
-							<Bars3Icon className="h-4 w-4" />
+						  <div className="flex items-center">
+							<div
+							  className="sub-grab-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
+							  title="Drag to reorder subtasks"
+							>
+							  <Bars3Icon className="h-4 w-4" />
+							</div>
+							<input
+							  type="checkbox"
+							  className="mr-2"
+							  checked={subCompleted}
+							  onChange={() => handleToggleCompleted(sub)}
+							/>
+							<div className="flex-1">
+							  {editingTaskId === sub.id ? (
+								<input
+								  autoFocus
+								  className="border-b border-gray-300 focus:outline-none"
+								  value={editingTaskName}
+								  onChange={(e) =>
+									handleEditNameChange(e.target.value)
+								  }
+								  onBlur={() => commitEdit(sub.id)}
+								  onKeyDown={(e) => {
+									if (e.key === "Enter") commitEdit(sub.id);
+									else if (e.key === "Escape")
+									  cancelEditing();
+								  }}
+								/>
+							  ) : (
+								<span
+								  className={`cursor-pointer ${
+									subCompleted
+									  ? "line-through text-gray-500"
+									  : ""
+								  }`}
+								  onClick={() =>
+									startEditingTask(sub.id, sub.fields.TaskName)
+								  }
+								>
+								  {sub.fields.TaskName}
+								</span>
+							  )}
+							  {subCompleted && subCompletedTime && (
+								<span className="ml-2 text-sm text-gray-400">
+								  (Done on{" "}
+								  {new Date(
+									subCompletedTime
+								  ).toLocaleString()}
+								  )
+								</span>
+							  )}
+							</div>
 						  </div>
-						  {/* subtask Completed? */}
-						  <input
-							type="checkbox"
-							className="mr-2"
-							checked={subCompleted}
-							onChange={() => handleToggleCompleted(sub)}
-						  />
-						  <div className="flex-1">
-							{isEditingSub ? (
-							  <input
-								autoFocus
-								className="border-b border-gray-300 focus:outline-none"
-								value={editingTaskName}
-								onChange={(e) =>
-								  handleEditNameChange(e.target.value)
-								}
-								onBlur={() => commitEdit(sub.id)}
-								onKeyDown={(e) => {
-								  if (e.key === "Enter") commitEdit(sub.id);
-								  else if (e.key === "Escape") cancelEditing();
-								}}
-							  />
-							) : (
-							  <span
-								className={`cursor-pointer ${
-								  subCompleted
-									? "line-through text-gray-500"
-									: ""
-								}`}
-								onClick={() =>
-								  startEditingTask(sub.id, sub.fields.TaskName)
-								}
-							  >
-								{sub.fields.TaskName}
-							  </span>
-							)}
-							{subCompleted && subCompletedTime && (
-							  <span className="ml-2 text-sm text-gray-400">
-								(Done on{" "}
-								{new Date(subCompletedTime).toLocaleString()})
-							  </span>
-							)}
-						  </div>
+
+						  {/* Milestones for THIS Subtask */}
+						  {subMilestones.length > 0 ? (
+							<div className="ml-6 mt-1 pl-3 border-l border-gray-200">
+							  <h4 className="font-semibold text-sm">
+								Milestones:
+							  </h4>
+							  <ul className="list-disc list-inside">
+								{subMilestones.map((m) => (
+								  <li key={m.id} className="mt-1">
+									<span className="font-medium">
+									  {m.fields.MilestoneName}
+									</span>{" "}
+									<span className="text-xs text-gray-500">
+									  (Target:{" "}
+									  {m.fields.MilestoneTime
+										? new Date(
+											m.fields.MilestoneTime
+										  ).toLocaleString()
+										: "No date"}
+									  )
+									</span>
+									{" – "}
+									<em className="text-blue-600 text-xs">
+									  {getTimeLeftString(m)}
+									</em>
+								  </li>
+								))}
+							  </ul>
+							</div>
+						  ) : (
+							<div className="ml-6 mt-1 pl-3 border-l border-gray-200">
+							  <p className="text-sm text-gray-500">
+								No milestones yet.
+							  </p>
+							</div>
+						  )}
 						</li>
 					  );
 					})}
 				  </ul>
 				)}
 
-				{/* Add new subtask */}
+				{/* BUTTON to create a new subtask for this parent */}
 				<div className="ml-6 mt-2 pl-3 border-l border-gray-200">
 				  <form
 					onSubmit={(e) => {

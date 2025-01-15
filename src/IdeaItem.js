@@ -4,9 +4,14 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
+/**
+ * IdeaItem - We link to /ideas/:customIdeaId,
+ * using idea.fields.IdeaID, not the Airtable rec ID.
+ */
 function IdeaItem({
   idea,
-  ideaTasks,
+  ideaTasks,         // tasks filtered for this Idea (passed from IdeaList)
+  ideaMilestones,    // milestones rolled up for this Idea (via tasks’ TaskID)
   isHovered,
   isConfirming,
   onHoverEnter,
@@ -16,12 +21,12 @@ function IdeaItem({
 }) {
   const [newTaskName, setNewTaskName] = useState("");
 
-  // Inline editing states for the Idea Title
+  // For editing the Idea Title inline
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitle, setEditingTitle] = useState(idea.fields.IdeaTitle);
 
-  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+  // The custom ID formula field from Airtable, e.g. "o0bwzsFdnLfR75"
+  const ideaCustomId = idea.fields.IdeaID;
 
   // Start editing the idea title
   const startEditingTitle = () => {
@@ -29,37 +34,33 @@ function IdeaItem({
 	setEditingTitle(idea.fields.IdeaTitle);
   };
 
-  // Cancel editing
   const cancelEditingTitle = () => {
 	setIsEditingTitle(false);
 	setEditingTitle(idea.fields.IdeaTitle);
   };
 
-  // Save changes to Airtable
   const handleTitleSave = async () => {
 	if (editingTitle.trim() === "") {
-	  // If user cleared the title, revert or handle otherwise
 	  cancelEditingTitle();
 	  return;
 	}
 	try {
-	  // Update local object (immediate feedback)
+	  // Optimistic update
 	  idea.fields.IdeaTitle = editingTitle;
-
-	  // Send PATCH request to Airtable
-	  await patchIdeaTitleInAirtable(idea.id, editingTitle);
-
-	  // Exit editing mode
+	  await patchIdeaTitle(idea.id, editingTitle);
 	  setIsEditingTitle(false);
 	} catch (err) {
 	  console.error("Failed to update idea title:", err);
 	  alert("Failed to update idea title. Please try again.");
-	  // Revert changes
 	  cancelEditingTitle();
 	}
   };
 
-  const patchIdeaTitleInAirtable = async (recordId, updatedTitle) => {
+  // Patch the Idea title in Airtable
+  const patchIdeaTitle = async (recordId, updatedTitle) => {
+	const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
+	const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+
 	if (!baseId || !apiKey) {
 	  throw new Error("Missing Airtable credentials.");
 	}
@@ -73,7 +74,7 @@ function IdeaItem({
 	  body: JSON.stringify({
 		records: [
 		  {
-			id: recordId,
+			id: recordId, // Airtable rec ID (not the custom idea ID)
 			fields: {
 			  IdeaTitle: updatedTitle,
 			},
@@ -81,19 +82,18 @@ function IdeaItem({
 		],
 	  }),
 	});
-
 	if (!resp.ok) {
 	  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	}
   };
 
-  // Let Sortable handle drag; just log the event
-  const handleDragStart = () => {
-	console.log(`Drag started for Idea ID: ${idea.id}`);
-  };
-
-  // Filter tasks to only show incomplete
+  // Show incomplete tasks count or list
   const incompleteTasks = ideaTasks.filter((t) => !t.fields.Completed);
+
+  // For drag handle events (Sortables in IdeaList/parent)
+  const handleDragStart = () => {
+	console.log(`Drag started for Idea custom ID: ${ideaCustomId}`);
+  };
 
   return (
 	<li
@@ -101,7 +101,7 @@ function IdeaItem({
 	  onMouseLeave={onHoverLeave}
 	  className="relative p-4 hover:bg-gray-50 transition flex"
 	>
-	  {/* DRAG HANDLE */}
+	  {/* Sortable handle */}
 	  <div
 		className="grab-idea-handle flex-shrink-0 mr-4 cursor-grab active:cursor-grabbing"
 		onMouseDown={handleDragStart}
@@ -112,7 +112,7 @@ function IdeaItem({
 	  </div>
 
 	  <div className="flex-1">
-		{/* Title / Delete */}
+		{/* Title & summary */}
 		<div className="flex justify-between items-start">
 		  <div>
 			{isEditingTitle ? (
@@ -138,6 +138,8 @@ function IdeaItem({
 			)}
 			<p className="text-gray-600 mt-1">{idea.fields.IdeaSummary}</p>
 		  </div>
+
+		  {/* Delete button (on hover) */}
 		  {isHovered && (
 			<button
 			  onClick={onDeleteClick}
@@ -152,15 +154,15 @@ function IdeaItem({
 		  )}
 		</div>
 
-		{/* Link to details */}
+		{/* Link to /ideas/:customIdeaId */}
 		<Link
-		  to={`/ideas/${idea.id}`}
+		  to={`/ideas/${ideaCustomId}`}
 		  className="mt-2 text-blue-600 hover:text-blue-800 underline inline-block"
 		>
 		  View details
 		</Link>
 
-		{/* Tasks Section */}
+		{/* Tasks section */}
 		<div className="mt-3 pl-4 border-l border-gray-200">
 		  <h4 className="font-semibold">Tasks:</h4>
 		  {incompleteTasks.length > 0 ? (
@@ -198,6 +200,20 @@ function IdeaItem({
 			  Add Task
 			</button>
 		  </form>
+		</div>
+
+		{/* Milestones section */}
+		<div className="mt-3 pl-4 border-l border-gray-200">
+		  <h4 className="font-semibold">Milestones:</h4>
+		  {ideaMilestones.length > 0 ? (
+			<ul className="list-disc list-inside">
+			  {ideaMilestones.map((m) => (
+				<li key={m.id}>{m.fields.MilestoneName}</li>
+			  ))}
+			</ul>
+		  ) : (
+			<p className="text-sm text-gray-500">No milestones yet.</p>
+		  )}
 		</div>
 	  </div>
 	</li>
