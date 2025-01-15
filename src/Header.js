@@ -23,14 +23,23 @@ function Header({ isLoggedIn, onLogout, airtableUser }) {
 		  <Link to="/">Big Idea</Link>
 		</h1>
 
-		{/* (Optional) Link to Today */}
+		{/* (Optional) If logged in, show more links */}
 		{isLoggedIn && (
-		  <Link
-			to="/today"
-			className="py-1 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-		  >
-			Today
-		  </Link>
+		  <>
+			<Link
+			  to="/today"
+			  className="py-1 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+			>
+			  Today
+			</Link>
+			{/* New link to Milestones */}
+			<Link
+			  to="/milestones"
+			  className="py-1 px-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+			>
+			  Milestones
+			</Link>
+		  </>
 		)}
 	  </div>
 

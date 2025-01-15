@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import IdeaList from "./IdeaList";
+import MilestoneModal from "./MilestoneModal"; // <-- new import
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
 // Helper to chunk an array into subarrays of size `size`
@@ -18,7 +19,7 @@ function chunkArray(arr, size) {
 function MainContent() {
   const [ideas, setIdeas] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [milestones, setMilestones] = useState([]); // now referencing tasks via TaskID
+  const [milestones, setMilestones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -30,6 +31,10 @@ function MainContent() {
   const [hoveredIdeaId, setHoveredIdeaId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState({});
 
+  // For milestone modal
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
+
   // Airtable
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
@@ -39,7 +44,7 @@ function MainContent() {
   const sortableRef = useRef(null);
 
   // --------------------------------------------------------------------------
-  // 1) Fetch Ideas, Tasks, and Milestones once on mount
+  // 1) Fetch Ideas, Tasks, Milestones once on mount
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchIdeasAndTasks = async () => {
@@ -62,7 +67,7 @@ function MainContent() {
 		  return;
 		}
 
-		// Fetch Ideas sorted by "Order"
+		// Fetch Ideas
 		console.log("Fetching ideas from Airtable...");
 		const ideasResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Ideas?sort[0][field]=Order&sort[0][direction]=asc`,
@@ -80,16 +85,15 @@ function MainContent() {
 		const ideasData = await ideasResp.json();
 		console.log("Fetched ideas: ", ideasData.records);
 
-		// Filter ideas by logged-in user’s phone number (if you store it)
+		// Filter ideas by user phone if desired
 		const userPhoneNumber = currentUser.phoneNumber;
 		const userIdeas = ideasData.records.filter(
 		  (rec) => rec.fields.UserMobile === userPhoneNumber
 		);
-		console.log("Filtered ideas for user:", userPhoneNumber, userIdeas);
 		setIdeas(userIdeas);
 
-		// Fetch Tasks (no changes needed; these still reference IdeaID)
-		console.log("Fetching tasks from Airtable...");
+		// Fetch Tasks
+		console.log("Fetching tasks...");
 		const tasksResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Tasks`,
 		  {
@@ -104,11 +108,10 @@ function MainContent() {
 		  );
 		}
 		const tasksData = await tasksResp.json();
-		console.log("Fetched tasks: ", tasksData.records);
 		setTasks(tasksData.records);
 
-		// Fetch Milestones (each milestone now references a Task via TaskID)
-		console.log("Fetching milestones from Airtable...");
+		// Fetch Milestones
+		console.log("Fetching milestones...");
 		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones`,
 		  {
@@ -123,7 +126,6 @@ function MainContent() {
 		  );
 		}
 		const milestonesData = await milestonesResp.json();
-		console.log("Fetched milestones: ", milestonesData.records);
 		setMilestones(milestonesData.records);
 	  } catch (err) {
 		console.error("Error fetching data from Airtable:", err);
@@ -184,7 +186,6 @@ function MainContent() {
 	  },
 	}));
 
-	console.log("New ideas order after drag:", reordered);
 	setIdeas(reordered);
 
 	try {
@@ -327,25 +328,21 @@ function MainContent() {
   // 6) Delete an Idea (and its associated tasks)
   // --------------------------------------------------------------------------
   const handleDeleteClick = (ideaId) => {
-	console.log("Delete clicked for ideaId:", ideaId);
 	if (!deleteConfirm[ideaId]) {
 	  setDeleteConfirm((prev) => ({ ...prev, [ideaId]: true }));
 	  return;
 	}
-	console.log("Delete confirmed for ideaId:", ideaId);
 	deleteIdea(ideaId);
   };
 
   async function deleteIdea(ideaId) {
-	console.log("Deleting idea with ID:", ideaId);
-
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
 
 	try {
-	  // 1) Fetch all tasks referencing this Idea
+	  // 1) Fetch tasks referencing this Idea
 	  const tasksResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"`,
 		{
@@ -361,9 +358,8 @@ function MainContent() {
 	  }
 	  const tasksData = await tasksResp.json();
 	  const taskRecords = tasksData.records;
-	  console.log(`Found ${taskRecords.length} tasks for Idea ${ideaId}.`);
 
-	  // 2) Batch-delete the tasks (in chunks of 10)
+	  // 2) Batch-delete the tasks
 	  if (taskRecords.length > 0) {
 		const taskChunks = chunkArray(taskRecords, 10);
 		for (const chunk of taskChunks) {
@@ -385,7 +381,7 @@ function MainContent() {
 		}
 	  }
 
-	  // 3) Delete the Idea record
+	  // 3) Delete the Idea
 	  const resp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
 		{
@@ -406,9 +402,8 @@ function MainContent() {
 		delete nextConfirm[ideaId];
 		return nextConfirm;
 	  });
-	  console.log(`Idea ${ideaId} and its tasks are deleted.`);
 	} catch (err) {
-	  console.error("Error deleting idea or its tasks:", err);
+	  console.error("Error deleting idea or tasks:", err);
 	  setError("Failed to delete the idea and its tasks. Please try again.");
 	}
   }
@@ -417,21 +412,12 @@ function MainContent() {
   // 7) Create a new Task => store the custom IdeaID as well
   // --------------------------------------------------------------------------
   const createTask = async (ideaCustomId, taskName) => {
-	console.log(
-	  "Creating task for idea custom ID:",
-	  ideaCustomId,
-	  "Task name:",
-	  taskName
-	);
-
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
-
 	try {
 	  const orderValue = tasks.length + 1;
-
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -443,18 +429,17 @@ function MainContent() {
 			{
 			  fields: {
 				TaskName: taskName,
-				// store the custom ID in the "IdeaID" field
 				IdeaID: ideaCustomId,
 				Order: orderValue,
 				Completed: false,
 				CompletedTime: null,
+				// MilestoneID empty by default
 			  },
 			},
 		  ],
 		  typecast: true,
 		}),
 	  });
-
 	  if (!resp.ok) {
 		let errorBody;
 		try {
@@ -468,13 +453,71 @@ function MainContent() {
 
 	  const data = await resp.json();
 	  const newTask = data.records[0];
-	  console.log("New task created in Airtable:", newTask);
-
-	  // Update local tasks state
 	  setTasks((prev) => [...prev, newTask]);
 	} catch (err) {
 	  console.error("Error creating task:", err);
-	  setError("Failed to create task. Please try again later.");
+	  setError("Failed to create task. Please try again.");
+	}
+  };
+
+  // --------------------------------------------------------------------------
+  // 8) Handle picking/assigning a Milestone to a Task
+  // --------------------------------------------------------------------------
+  const handlePickMilestone = (task) => {
+	// This sets the “active task” that we want to assign a milestone
+	setActiveTaskForMilestone(task);
+	setShowMilestoneModal(true);
+  };
+
+  const assignMilestoneToTask = async (milestone) => {
+	if (!activeTaskForMilestone) return;
+	try {
+	  // local update
+	  const updated = tasks.map((t) =>
+		t.id === activeTaskForMilestone.id
+		  ? {
+			  ...t,
+			  fields: {
+				...t.fields,
+				MilestoneID: milestone.id,
+			  },
+			}
+		  : t
+	  );
+	  setTasks(updated);
+
+	  // patch to Airtable
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: activeTaskForMilestone.id,
+			  fields: {
+				MilestoneID: milestone.id,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error assigning milestone:", err);
+	  setError("Failed to assign milestone. Please try again.");
+	} finally {
+	  setShowMilestoneModal(false);
+	  setActiveTaskForMilestone(null);
 	}
   };
 
@@ -490,6 +533,18 @@ function MainContent() {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
+	  {/* If the milestone modal is open, render it here */}
+	  {showMilestoneModal && (
+		<MilestoneModal
+		  allMilestones={milestones}
+		  onClose={() => {
+			setShowMilestoneModal(false);
+			setActiveTaskForMilestone(null);
+		  }}
+		  onSelect={assignMilestoneToTask}
+		/>
+	  )}
+
 	  <h2 className="text-2xl font-bold mb-4">Your Ideas</h2>
 
 	  {/* Create Idea form */}
@@ -540,13 +595,14 @@ function MainContent() {
 	  <IdeaList
 		ideas={ideas}
 		tasks={tasks}
-		milestones={milestones} // passing all milestones; we'll link them via TaskID later
+		milestones={milestones} // pass all milestones
 		ideasListRef={ideasListRef}
 		hoveredIdeaId={hoveredIdeaId}
 		setHoveredIdeaId={setHoveredIdeaId}
 		deleteConfirm={deleteConfirm}
 		handleDeleteClick={handleDeleteClick}
 		onCreateTask={createTask}
+		onPickMilestone={handlePickMilestone} // new prop
 	  />
 	</div>
   );

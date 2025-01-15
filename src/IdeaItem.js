@@ -5,30 +5,39 @@ import { Link } from "react-router-dom";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
 /**
- * IdeaItem - We link to /ideas/:customIdeaId,
- * using idea.fields.IdeaID, not the Airtable rec ID.
+ * IdeaItem - Displays one Idea “card” with tasks + the single milestone for each task.
+ *
+ * Props:
+ * - idea: The Airtable Idea record.
+ * - ideaTasks: The tasks belonging to this Idea (an array).
+ * - allMilestones: Array of all Milestone records (e.g. from your fetch).
+ * - isHovered, isConfirming: For hover & delete UX.
+ * - onHoverEnter, onHoverLeave, onDeleteClick: For hover & delete logic.
+ * - onTaskCreate: Callback to create a new Task.
+ * - onPickMilestone: A function that (for example) opens a modal to pick a milestone.
  */
 function IdeaItem({
   idea,
-  ideaTasks,         // tasks filtered for this Idea (passed from IdeaList)
-  ideaMilestones,    // milestones rolled up for this Idea (via tasks’ TaskID)
+  ideaTasks,
+  allMilestones,
   isHovered,
   isConfirming,
   onHoverEnter,
   onHoverLeave,
   onDeleteClick,
   onTaskCreate,
+  onPickMilestone,
 }) {
   const [newTaskName, setNewTaskName] = useState("");
-
-  // For editing the Idea Title inline
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitle, setEditingTitle] = useState(idea.fields.IdeaTitle);
 
   // The custom ID formula field from Airtable, e.g. "o0bwzsFdnLfR75"
   const ideaCustomId = idea.fields.IdeaID;
 
-  // Start editing the idea title
+  // --------------------------------------------------------------------------
+  // Inline editing for Idea Title
+  // --------------------------------------------------------------------------
   const startEditingTitle = () => {
 	setIsEditingTitle(true);
 	setEditingTitle(idea.fields.IdeaTitle);
@@ -56,11 +65,9 @@ function IdeaItem({
 	}
   };
 
-  // Patch the Idea title in Airtable
   const patchIdeaTitle = async (recordId, updatedTitle) => {
 	const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
 	const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
-
 	if (!baseId || !apiKey) {
 	  throw new Error("Missing Airtable credentials.");
 	}
@@ -74,7 +81,7 @@ function IdeaItem({
 	  body: JSON.stringify({
 		records: [
 		  {
-			id: recordId, // Airtable rec ID (not the custom idea ID)
+			id: recordId,
 			fields: {
 			  IdeaTitle: updatedTitle,
 			},
@@ -87,14 +94,29 @@ function IdeaItem({
 	}
   };
 
-  // Show incomplete tasks count or list
+  // --------------------------------------------------------------------------
+  // Check for incomplete tasks
+  // --------------------------------------------------------------------------
   const incompleteTasks = ideaTasks.filter((t) => !t.fields.Completed);
 
-  // For drag handle events (Sortables in IdeaList/parent)
+  // --------------------------------------------------------------------------
+  // A helper to find the milestone record for a given Task
+  // --------------------------------------------------------------------------
+  const getTaskMilestone = (task) => {
+	if (!task.fields.MilestoneID) return null;
+	return allMilestones.find((m) => m.id === task.fields.MilestoneID) || null;
+  };
+
+  // --------------------------------------------------------------------------
+  // Drag handle (Sortables in parent component)
+  // --------------------------------------------------------------------------
   const handleDragStart = () => {
 	console.log(`Drag started for Idea custom ID: ${ideaCustomId}`);
   };
 
+  // --------------------------------------------------------------------------
+  // Render
+  // --------------------------------------------------------------------------
   return (
 	<li
 	  onMouseEnter={onHoverEnter}
@@ -139,7 +161,7 @@ function IdeaItem({
 			<p className="text-gray-600 mt-1">{idea.fields.IdeaSummary}</p>
 		  </div>
 
-		  {/* Delete button (on hover) */}
+		  {/** Delete button (on hover) */}
 		  {isHovered && (
 			<button
 			  onClick={onDeleteClick}
@@ -162,14 +184,35 @@ function IdeaItem({
 		  View details
 		</Link>
 
-		{/* Tasks section */}
+		{/* Tasks Section */}
 		<div className="mt-3 pl-4 border-l border-gray-200">
 		  <h4 className="font-semibold">Tasks:</h4>
+
 		  {incompleteTasks.length > 0 ? (
 			<ul className="list-disc list-inside">
-			  {incompleteTasks.map((task) => (
-				<li key={task.id}>{task.fields.TaskName}</li>
-			  ))}
+			  {incompleteTasks.map((task) => {
+				const milestone = getTaskMilestone(task);
+				return (
+				  <li key={task.id} className="mb-1">
+					{task.fields.TaskName}
+					{milestone ? (
+					  <>
+						{" "}
+						— <em className="text-sm text-blue-600">
+						  {milestone.fields.MilestoneName}
+						</em>
+					  </>
+					) : (
+					  <button
+						className="ml-2 text-xs text-blue-600 underline"
+						onClick={() => onPickMilestone(task)}
+					  >
+						+ Add Milestone
+					  </button>
+					)}
+				  </li>
+				);
+			  })}
 			</ul>
 		  ) : (
 			<p className="text-sm text-gray-500">No incomplete tasks.</p>
@@ -202,19 +245,11 @@ function IdeaItem({
 		  </form>
 		</div>
 
-		{/* Milestones section */}
-		<div className="mt-3 pl-4 border-l border-gray-200">
-		  <h4 className="font-semibold">Milestones:</h4>
-		  {ideaMilestones.length > 0 ? (
-			<ul className="list-disc list-inside">
-			  {ideaMilestones.map((m) => (
-				<li key={m.id}>{m.fields.MilestoneName}</li>
-			  ))}
-			</ul>
-		  ) : (
-			<p className="text-sm text-gray-500">No milestones yet.</p>
-		  )}
-		</div>
+		{/*
+		  We no longer do a big "Milestones" section for the entire Idea,
+		  because each Task references a single milestone. So we've removed
+		  the old `ideaMilestones.map(...)`.
+		*/}
 	  </div>
 	</li>
   );

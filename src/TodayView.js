@@ -1,4 +1,3 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/TodayView.js
 // File: /src/TodayView.js
 
 import React, { useEffect, useState, useRef } from "react";
@@ -7,37 +6,65 @@ import { Link } from "react-router-dom";
 import Sortable from "sortablejs";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
+// (Optional) A simple placeholder for a milestone picker
+// In a real app, you'd create a modal like in IdeaDetail or do an inline select.
+function MilestonePickerModal({ allMilestones, onClose, onSelect }) {
+  return (
+	<div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+	  <div className="bg-white p-4 rounded shadow-lg w-80">
+		<h3 className="font-bold mb-2">Pick a Milestone</h3>
+		<ul className="divide-y max-h-64 overflow-y-auto">
+		  {allMilestones.map((m) => (
+			<li key={m.id}>
+			  <button
+				onClick={() => onSelect(m)}
+				className="w-full text-left py-2 px-2 hover:bg-gray-100"
+			  >
+				{m.fields.MilestoneName || "(Untitled)"}
+			  </button>
+			</li>
+		  ))}
+		</ul>
+		<button
+		  className="mt-3 px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+		  onClick={onClose}
+		>
+		  Cancel
+		</button>
+	  </div>
+	</div>
+  );
+}
+
 function TodayView() {
   // --------------------------------------------------------------------------
   // State
   // --------------------------------------------------------------------------
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
+  const [milestones, setMilestones] = useState([]); // <-- fetch all milestones
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Inline editing for tasks
+  // For inline editing tasks
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
 
-  // For creating new subtask input (if needed)
-  const [newSubtaskName, setNewSubtaskName] = useState({});
+  // For optional milestone modal
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
 
-  // We'll have a top-level Sortable for relevant Ideas
+  // Refs for sorting
   const ideasListRef = useRef(null);
-
-  // We'll also store a ref for each Idea's "parent tasks" UL
   const tasksSortableRefs = useRef({});
-
-  // And a ref for each parent's subtask UL
   const subtaskSortableRefs = useRef({});
 
-  // Airtable credentials
+  // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   // --------------------------------------------------------------------------
-  // 1) Fetch tasks + ideas => BOTH sorted by "OrderToday" and "SubOrder"
+  // 1) Fetch tasks + ideas + milestones => tasks sorted by "OrderToday" & "SubOrder"
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchData = async () => {
@@ -57,7 +84,7 @@ function TodayView() {
 		}
 		setLoading(true);
 
-		// A) Fetch tasks, sorted by "OrderToday" + SubOrder
+		// A) Fetch tasks
 		const tasksUrl = `https://api.airtable.com/v0/${baseId}/Tasks?sort%5B0%5D%5Bfield%5D=OrderToday&sort%5B0%5D%5Bdirection%5D=asc&sort%5B1%5D%5Bfield%5D=SubOrder&sort%5B1%5D%5Bdirection%5D=asc`;
 		const tasksResp = await fetch(tasksUrl, {
 		  headers: { Authorization: `Bearer ${apiKey}` },
@@ -70,7 +97,7 @@ function TodayView() {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// B) Fetch Ideas, also sorted by "OrderToday"
+		// B) Fetch Ideas
 		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas?sort%5B0%5D%5Bfield%5D=OrderToday&sort%5B0%5D%5Bdirection%5D=asc`;
 		const ideasResp = await fetch(ideasUrl, {
 		  headers: { Authorization: `Bearer ${apiKey}` },
@@ -82,6 +109,19 @@ function TodayView() {
 		}
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
+
+		// C) Fetch Milestones
+		const milestonesUrl = `https://api.airtable.com/v0/${baseId}/Milestones?sort%5B0%5D%5Bfield%5D=MilestoneName&sort%5B0%5D%5Bdirection%5D=asc`;
+		const milestonesResp = await fetch(milestonesUrl, {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
+		if (!milestonesResp.ok) {
+		  throw new Error(
+			`Milestones error: ${milestonesResp.status} ${milestonesResp.statusText}`
+		  );
+		}
+		const milestonesData = await milestonesResp.json();
+		setMilestones(milestonesData.records);
 	  } catch (err) {
 		console.error("Failed to fetch tasks or ideas:", err);
 		setError("Failed to load tasks for Today. Please try again.");
@@ -122,7 +162,7 @@ function TodayView() {
   });
 
   // --------------------------------------------------------------------------
-  // 3) Reorder the *Ideas* themselves (optional)
+  // 3) Reorder the *Ideas* themselves
   // --------------------------------------------------------------------------
   useEffect(() => {
 	if (loading) return;
@@ -144,7 +184,6 @@ function TodayView() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// reorder only the relevant ideas
 	const updated = [...relevantIdeas];
 	const [moved] = updated.splice(oldIndex, 1);
 	updated.splice(newIndex, 0, moved);
@@ -176,7 +215,7 @@ function TodayView() {
 	  fields: { OrderToday: idea.fields.OrderToday },
 	}));
 
-	// Patch in chunks of 10 if needed
+	// Patch in chunks of 10
 	const chunkSize = 10;
 	for (let i = 0; i < records.length; i += chunkSize) {
 	  const chunk = records.slice(i, i + chunkSize);
@@ -195,7 +234,7 @@ function TodayView() {
   };
 
   // --------------------------------------------------------------------------
-  // 4) For each Idea, reorder parent tasks by "OrderToday"
+  // 4) Reorder parent tasks by "OrderToday"
   // --------------------------------------------------------------------------
   useEffect(() => {
 	if (loading) return;
@@ -224,7 +263,6 @@ function TodayView() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// filter parent tasks for that idea
 	const tasksForIdea = tasksByIdea[ideaId] || [];
 	const parentToday = tasksForIdea.filter(
 	  (t) => t.fields.Today && !t.fields.ParentTask
@@ -292,7 +330,7 @@ function TodayView() {
 
 	tasks.forEach((task) => {
 	  if (!task.fields.ParentTask && task.fields.Today) {
-		// This is a parent task
+		// This is a parent task in Today
 		const subListEl = document.getElementById(`subtasks-ul-${task.id}`);
 		if (!subListEl) return;
 		if (!subtaskSortableRefs.current[task.id]) {
@@ -401,24 +439,27 @@ function TodayView() {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Completed: newValue,
-				CompletedTime: newTime,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Completed: newValue,
+				  CompletedTime: newTime,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -465,23 +506,26 @@ function TodayView() {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Today: newValue,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Today: newValue,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -535,23 +579,26 @@ function TodayView() {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: taskId,
-			  fields: {
-				TaskName: editingTaskName,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: taskId,
+				fields: {
+				  TaskName: editingTaskName,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -575,15 +622,13 @@ function TodayView() {
 	const toDelete = tasks.find((t) => t.id === taskId);
 	if (!toDelete) return;
 
-	const parentUniqueID = toDelete.fields.TaskID; // parent's unique ID
+	const parentUniqueID = toDelete.fields.TaskID;
 
 	// remove parent from local
 	setTasks((prev) => prev.filter((t) => t.id !== taskId));
 
 	// locate child tasks referencing the parent's TaskID => clear their ParentTask
-	const childTasks = tasks.filter(
-	  (t) => t.fields.ParentTask === parentUniqueID
-	);
+	const childTasks = tasks.filter((t) => t.fields.ParentTask === parentUniqueID);
 	if (childTasks.length > 0) {
 	  try {
 		const recordsToPatch = childTasks.map((ct) => ({
@@ -593,18 +638,20 @@ function TodayView() {
 		  },
 		}));
 
-		// patch in chunks if needed
 		const chunkSize = 10;
 		for (let i = 0; i < recordsToPatch.length; i += chunkSize) {
 		  const chunk = recordsToPatch.slice(i, i + chunkSize);
-		  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-			method: "PATCH",
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			  "Content-Type": "application/json",
-			},
-			body: JSON.stringify({ records: chunk }),
-		  });
+		  const patchResp = await fetch(
+			`https://api.airtable.com/v0/${baseId}/Tasks`,
+			{
+			  method: "PATCH",
+			  headers: {
+				Authorization: `Bearer ${apiKey}`,
+				"Content-Type": "application/json",
+			  },
+			  body: JSON.stringify({ records: chunk }),
+			}
+		  );
 		  if (!patchResp.ok) {
 			throw new Error(
 			  `Airtable error (clear children): ${patchResp.status} ${patchResp.statusText}`
@@ -628,7 +675,6 @@ function TodayView() {
 		);
 	  } catch (err) {
 		console.error("Error removing ParentTask from child tasks:", err);
-		// optionally revert local changes if needed
 	  }
 	}
 
@@ -655,15 +701,70 @@ function TodayView() {
   };
 
   // --------------------------------------------------------------------------
-  // 9) Create a NEW subtask
+  // 9) Single milestone approach => a helper to find a milestone for each task
   // --------------------------------------------------------------------------
-  const handleCreateSubtask = async (parentTask) => {
-	// Example usage; if you'd like a form per parent, etc.
-	// Setting "SubOrder", or letting the user type a name, etc.
-	// For brevity, we won't fill out the entire code here, 
-	// but you'd do similarly to IdeaDetail's `createSubtask`.
-	console.log("handleCreateSubtask for parent:", parentTask.fields.TaskName);
-	// ...
+  const getTaskMilestone = (task) => {
+	if (!task.fields.MilestoneID) return null;
+	return milestones.find((m) => m.id === task.fields.MilestoneID) || null;
+  };
+
+  // Optional: function to handle picking a milestone
+  const handlePickMilestone = (task) => {
+	setActiveTaskForMilestone(task);
+	setShowMilestoneModal(true);
+  };
+
+  // Called when user selects a milestone in the modal
+  const assignMilestoneToTask = async (milestone) => {
+	if (!activeTaskForMilestone) return;
+	try {
+	  // local update
+	  const updated = tasks.map((t) =>
+		t.id === activeTaskForMilestone.id
+		  ? {
+			  ...t,
+			  fields: {
+				...t.fields,
+				MilestoneID: milestone.id,
+			  },
+			}
+		  : t
+	  );
+	  setTasks(updated);
+
+	  // patch to Airtable
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: activeTaskForMilestone.id,
+			  fields: {
+				MilestoneID: milestone.id,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error (assign milestone): ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error assigning milestone:", err);
+	  setError("Failed to assign milestone. Please try again.");
+	} finally {
+	  setShowMilestoneModal(false);
+	  setActiveTaskForMilestone(null);
+	}
   };
 
   // --------------------------------------------------------------------------
@@ -689,6 +790,18 @@ function TodayView() {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
+	  {/* Milestone Modal if needed */}
+	  {showMilestoneModal && (
+		<MilestonePickerModal
+		  allMilestones={milestones}
+		  onClose={() => {
+			setShowMilestoneModal(false);
+			setActiveTaskForMilestone(null);
+		  }}
+		  onSelect={assignMilestoneToTask}
+		/>
+	  )}
+
 	  <h2 className="text-2xl font-bold mb-4">Tasks for Today</h2>
 	  <Link to="/" className="text-blue-500 underline">
 		&larr; Back to your Ideas
@@ -701,6 +814,7 @@ function TodayView() {
 		  const ideaTitle = idea.fields.IdeaTitle || "Untitled Idea";
 
 		  const tasksForIdea = tasksByIdea[ideaId] || [];
+		  // filter only the parent tasks with Today==true
 		  const parentToday = tasksForIdea.filter(
 			(t) => t.fields.Today && !t.fields.ParentTask
 		  );
@@ -729,6 +843,9 @@ function TodayView() {
 				  // All subtasks for this parent
 				  const subList = subtasksByParent[task.fields.TaskID] || [];
 
+				  // Single milestone for this Task
+				  const milestone = getTaskMilestone(task);
+
 				  return (
 					<li key={task.id} className="p-4 hover:bg-gray-50">
 					  {/* PARENT TASK ROW */}
@@ -753,9 +870,7 @@ function TodayView() {
 							  autoFocus
 							  className="border-b border-gray-300 focus:outline-none"
 							  value={editingTaskName}
-							  onChange={(e) =>
-								handleEditNameChange(e.target.value)
-							  }
+							  onChange={(e) => handleEditNameChange(e.target.value)}
 							  onBlur={() => commitEdit(task.id)}
 							  onKeyDown={(e) => {
 								if (e.key === "Enter") commitEdit(task.id);
@@ -765,9 +880,7 @@ function TodayView() {
 						  ) : (
 							<span
 							  className={`cursor-pointer ${
-								isCompleted
-								  ? "line-through text-gray-500"
-								  : ""
+								isCompleted ? "line-through text-gray-500" : ""
 							  }`}
 							  onClick={() => startEditingTask(task)}
 							>
@@ -792,6 +905,23 @@ function TodayView() {
 						</div>
 					  </div>
 
+					  {/* MILESTONE => single reference */}
+					  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
+						<h4 className="text-sm font-semibold">Milestone:</h4>
+						{milestone ? (
+						  <p className="text-sm text-blue-600">
+							{milestone.fields.MilestoneName}
+						  </p>
+						) : (
+						  <p
+							className="text-sm text-blue-600 underline cursor-pointer"
+							onClick={() => handlePickMilestone(task)}
+						  >
+							No milestone yet (click to add)
+						  </p>
+						)}
+					  </div>
+
 					  {/* SUBTASKS => each sorted by "SubOrder" */}
 					  {subList.length > 0 && (
 						<ul
@@ -801,59 +931,80 @@ function TodayView() {
 						  {subList.map((sub) => {
 							const subIsEditing = editingTaskId === sub.id;
 							const subCompleted = sub.fields.Completed || false;
-							const subCompletedTime =
-							  sub.fields.CompletedTime || null;
+							const subCompletedTime = sub.fields.CompletedTime || null;
+							const subMilestone = getTaskMilestone(sub);
+
 							return (
 							  <li
 								key={sub.id}
-								className="py-2 pl-3 hover:bg-gray-50 flex items-center"
+								className="py-2 pl-3 hover:bg-gray-50 flex flex-col"
 							  >
-								<div
-								  className="subtask-drag-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
-								  title="Drag to reorder subtasks"
-								>
-								  <Bars3Icon className="h-4 w-4" />
+								<div className="flex items-center">
+								  <div
+									className="subtask-drag-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
+									title="Drag to reorder subtasks"
+								  >
+									<Bars3Icon className="h-4 w-4" />
+								  </div>
+								  <input
+									type="checkbox"
+									className="mr-2"
+									checked={subCompleted}
+									onChange={() => handleToggleCompleted(sub)}
+								  />
+								  <div className="flex-1">
+									{subIsEditing ? (
+									  <input
+										autoFocus
+										className="border-b border-gray-300 focus:outline-none"
+										value={editingTaskName}
+										onChange={(e) =>
+										  handleEditNameChange(e.target.value)
+										}
+										onBlur={() => commitEdit(sub.id)}
+										onKeyDown={(e) => {
+										  if (e.key === "Enter") commitEdit(sub.id);
+										  else if (e.key === "Escape")
+											cancelEditing();
+										}}
+									  />
+									) : (
+									  <span
+										className={`cursor-pointer ${
+										  subCompleted
+											? "line-through text-gray-500"
+											: ""
+										}`}
+										onClick={() => startEditingTask(sub)}
+									  >
+										{sub.fields.TaskName}
+									  </span>
+									)}
+									{subCompleted && subCompletedTime && (
+									  <span className="ml-2 text-sm text-gray-400">
+										(Done on{" "}
+										{new Date(subCompletedTime).toLocaleString()})
+									  </span>
+									)}
+								  </div>
 								</div>
-								<input
-								  type="checkbox"
-								  className="mr-2"
-								  checked={subCompleted}
-								  onChange={() => handleToggleCompleted(sub)}
-								/>
-								<div className="flex-1">
-								  {subIsEditing ? (
-									<input
-									  autoFocus
-									  className="border-b border-gray-300 focus:outline-none"
-									  value={editingTaskName}
-									  onChange={(e) =>
-										handleEditNameChange(e.target.value)
-									  }
-									  onBlur={() => commitEdit(sub.id)}
-									  onKeyDown={(e) => {
-										if (e.key === "Enter") commitEdit(sub.id);
-										else if (e.key === "Escape")
-										  cancelEditing();
-									  }}
-									/>
+
+								{/* Single milestone for subtask */}
+								<div className="ml-6 mt-1 pl-3 border-l border-gray-200">
+								  <h4 className="text-sm font-semibold">
+									Milestone:
+								  </h4>
+								  {subMilestone ? (
+									<p className="text-xs text-blue-600">
+									  {subMilestone.fields.MilestoneName}
+									</p>
 								  ) : (
-									<span
-									  className={`cursor-pointer ${
-										subCompleted
-										  ? "line-through text-gray-500"
-										  : ""
-									  }`}
-									  onClick={() => startEditingTask(sub)}
+									<p
+									  className="text-xs text-blue-600 underline cursor-pointer"
+									  onClick={() => handlePickMilestone(sub)}
 									>
-									  {sub.fields.TaskName}
-									</span>
-								  )}
-								  {subCompleted && subCompletedTime && (
-									<span className="ml-2 text-sm text-gray-400">
-									  (Done on{" "}
-									  {new Date(subCompletedTime).toLocaleString()}
-									  )
-									</span>
+									  No milestone yet (click to add)
+									</p>
 								  )}
 								</div>
 							  </li>
@@ -861,11 +1012,6 @@ function TodayView() {
 						  })}
 						</ul>
 					  )}
-
-					  {/* Add new subtask form (optional) */}
-					  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
-						{/* e.g. a form or button to create a subtask */}
-					  </div>
 					</li>
 				  );
 				})}

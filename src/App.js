@@ -1,4 +1,5 @@
 // File: /src/App.js
+
 import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
@@ -9,6 +10,7 @@ import MainContent from "./MainContent";
 import Onboarding from "./Onboarding";
 import IdeaDetail from "./IdeaDetail";
 import TodayView from "./TodayView";
+import Milestones from "./Milestones"; // <--- NEW import for your Milestones page
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -73,16 +75,18 @@ function App() {
             )
           }
         />
-        {/* 
-          INSTEAD of "/ideas/:ideaId", we do "/ideas/:customIdeaId"
-          This means in IdeaDetail.js, we'll read `useParams().customIdeaId`
-        */}
+
+        {/* /ideas/:customIdeaId (show IdeaDetail) */}
         <Route path="/ideas/:customIdeaId" element={<IdeaDetail />} />
 
+        {/* /today => TodayView */}
         <Route path="/today" element={<TodayView />} />
+
+        {/* /milestones => New Milestones page */}
+        <Route path="/milestones" element={<Milestones />} />
       </Routes>
     </Router>
   );
 }
 
-export default App; 
+export default App;

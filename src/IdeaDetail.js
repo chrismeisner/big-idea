@@ -6,6 +6,37 @@ import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
+// A simple modal component for picking a milestone
+function PickMilestoneModal({ allMilestones, onClose, onSelectMilestone }) {
+  return (
+	<div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-50">
+	  <div className="bg-white p-4 rounded shadow-lg w-80">
+		<h3 className="text-lg font-semibold mb-3">Pick a Milestone</h3>
+
+		<ul className="max-h-64 overflow-y-auto border rounded divide-y">
+		  {allMilestones.map((m) => (
+			<li key={m.id}>
+			  <button
+				className="w-full text-left p-2 hover:bg-gray-100"
+				onClick={() => onSelectMilestone(m)}
+			  >
+				{m.fields.MilestoneName || "(Untitled Milestone)"}
+			  </button>
+			</li>
+		  ))}
+		</ul>
+
+		<button
+		  onClick={onClose}
+		  className="mt-3 px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+		>
+		  Cancel
+		</button>
+	  </div>
+	</div>
+  );
+}
+
 function IdeaDetail() {
   const [idea, setIdea] = useState(null);
   const [tasks, setTasks] = useState([]);
@@ -19,6 +50,10 @@ function IdeaDetail() {
   // Inline editing states
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
+
+  // For modal
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
 
   // Refs for Sortable
   const topLevelRef = useRef(null);
@@ -53,7 +88,7 @@ function IdeaDetail() {
 		}
 		setLoading(true);
 
-		// A) Fetch the single Idea record
+		// A) Fetch the single Idea record (by customIdeaId)
 		const ideaResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Ideas?filterByFormula={IdeaID}="${customIdeaId}"`,
 		  { headers: { Authorization: `Bearer ${apiKey}` } }
@@ -85,7 +120,8 @@ function IdeaDetail() {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// C) Fetch ALL Milestones (which reference a Task by TaskID)
+		// C) Fetch ALL Milestones
+		//    (Now we do NOT rely on TaskID in Milestones. We'll store the chosen milestone in Task.fields.MilestoneID.)
 		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones`,
 		  { headers: { Authorization: `Bearer ${apiKey}` } }
@@ -160,7 +196,7 @@ function IdeaDetail() {
 	const merged = [...updated, ...subTasks];
 	setTasks(merged);
 
-	// Update Airtable
+	// Optional: Patch to Airtable if you want to store "Order" updates
 	try {
 	  await patchTopLevelOrder(updated);
 	} catch (err) {
@@ -314,6 +350,7 @@ function IdeaDetail() {
 				  CompletedTime: null,
 				  ParentTask: "",
 				  Today: false,
+				  // We'll add MilestoneID if chosen, but for new tasks, it's empty
 				},
 			  },
 			],
@@ -371,6 +408,7 @@ function IdeaDetail() {
 				  CompletedTime: null,
 				  ParentTask: parentID,
 				  Today: false,
+				  // MilestoneID empty, by default
 				},
 			  },
 			],
@@ -592,9 +630,7 @@ function IdeaDetail() {
 				fields: {
 				  ...t.fields,
 				  Completed: wasCompleted,
-				  CompletedTime: wasCompleted
-					? t.fields.CompletedTime
-					: null,
+				  CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
 				},
 			  }
 			: t
@@ -677,61 +713,72 @@ function IdeaDetail() {
   );
 
   // --------------------------------------------------------------------------
-  // 9) Helper: Get Milestones for a given Task (matching TaskID)
+  // 9) Handling the single Milestone reference
   // --------------------------------------------------------------------------
-  const getMilestonesForTask = (taskRecord) => {
-	const thisTaskID = taskRecord.fields.TaskID; // unique text ID
-	return milestones.filter((m) => m.fields.TaskID === thisTaskID);
+  // For each Task, check .fields.MilestoneID => see if we find that milestone
+  const getMilestoneForTask = (task) => {
+	const milestoneId = task.fields.MilestoneID;
+	if (!milestoneId) return null;
+	return milestones.find((m) => m.id === milestoneId) || null;
   };
 
-  // --------------------------------------------------------------------------
-  // 10) NEW: Gather *all* Milestones for this Idea & show at the top
-  // --------------------------------------------------------------------------
-  // We can flatten all tasks => gather all associated milestones => unique array
-  const allIdeaMilestones = tasks.flatMap((t) => getMilestonesForTask(t));
+  // Show a modal to pick a Milestone for the given task
+  const handlePickMilestone = (task) => {
+	setActiveTaskForMilestone(task);
+	setShowMilestoneModal(true);
+  };
 
-  // Optional: Sort milestones by date/time ascending
-  allIdeaMilestones.sort((a, b) => {
-	const aTime = a.fields.MilestoneTime
-	  ? new Date(a.fields.MilestoneTime).getTime()
-	  : 0;
-	const bTime = b.fields.MilestoneTime
-	  ? new Date(b.fields.MilestoneTime).getTime()
-	  : 0;
-	return aTime - bTime;
-  });
+  // Called by the modal when user picks a milestone
+  const assignMilestoneToTask = async (milestone) => {
+	if (!activeTaskForMilestone) return;
+	try {
+	  const updatedTasks = tasks.map((t) =>
+		t.id === activeTaskForMilestone.id
+		  ? {
+			  ...t,
+			  fields: {
+				...t.fields,
+				MilestoneID: milestone.id,
+			  },
+			}
+		  : t
+	  );
+	  setTasks(updatedTasks);
 
-  // Simple helper to get a “countdown” string (days left, hours left, etc.)
-  // For a more robust approach, you'd handle time zones, partial days, etc.
-  function getTimeLeftString(milestone) {
-	if (!milestone.fields.MilestoneTime) return "(no time set)";
-
-	const now = Date.now(); // current timestamp in ms
-	const target = new Date(milestone.fields.MilestoneTime).getTime();
-	const diffMs = target - now;
-
-	if (diffMs <= 0) {
-	  return "Expired"; // or "Passed" if it's already in the past
+	  // Patch the chosen milestone ID to Airtable
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: activeTaskForMilestone.id,
+			  fields: {
+				MilestoneID: milestone.id,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error assigning milestone:", err);
+	  setError("Failed to assign milestone. Please try again.");
+	} finally {
+	  setShowMilestoneModal(false);
+	  setActiveTaskForMilestone(null);
 	}
-
-	// In milliseconds:
-	const oneDay = 24 * 60 * 60 * 1000;
-	const oneHour = 60 * 60 * 1000;
-	const oneMin = 60 * 1000;
-
-	const daysLeft = Math.floor(diffMs / oneDay);
-	const hoursLeft = Math.floor((diffMs % oneDay) / oneHour);
-	const minsLeft = Math.floor((diffMs % oneHour) / oneMin);
-
-	if (daysLeft > 0) {
-	  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`;
-	} else if (hoursLeft > 0) {
-	  return `${hoursLeft} hour${hoursLeft === 1 ? "" : "s"} left`;
-	} else {
-	  // fallback to minutes
-	  return `${minsLeft} minute${minsLeft === 1 ? "" : "s"} left`;
-	}
-  }
+  };
 
   // --------------------------------------------------------------------------
   // Render
@@ -752,43 +799,24 @@ function IdeaDetail() {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
+	  {/* If modal is open, render it here */}
+	  {showMilestoneModal && (
+		<PickMilestoneModal
+		  allMilestones={milestones}
+		  onClose={() => {
+			setShowMilestoneModal(false);
+			setActiveTaskForMilestone(null);
+		  }}
+		  onSelectMilestone={assignMilestoneToTask}
+		/>
+	  )}
+
 	  <Link to="/" className="text-blue-500 underline">
 		&larr; Back to your ideas
 	  </Link>
 
 	  <h2 className="text-2xl font-bold mt-4">{idea.fields.IdeaTitle}</h2>
 	  <p className="mt-2 text-gray-700">{idea.fields.IdeaSummary}</p>
-
-	  {/*
-		NEW SECTION at the top: "Upcoming Milestones"
-		only shows if we have at least 1 milestone for this Idea
-	  */}
-	  {allIdeaMilestones.length > 0 && (
-		<div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
-		  <h3 className="font-semibold">Upcoming Milestones</h3>
-		  <ul className="list-disc list-inside mt-2">
-			{allIdeaMilestones.map((m) => {
-			  const milestoneName = m.fields.MilestoneName || "(untitled)";
-			  const milestoneTime = m.fields.MilestoneTime
-				? new Date(m.fields.MilestoneTime).toLocaleString()
-				: "(no date)";
-
-			  const countdown = getTimeLeftString(m);
-
-			  return (
-				<li key={m.id} className="mb-1">
-				  <strong>{milestoneName}</strong>{" "}
-				  <span className="text-sm text-gray-600">
-					(Target: {milestoneTime})
-				  </span>
-				  {" – "}
-				  <span className="text-blue-600 italic">{countdown}</span>
-				</li>
-			  );
-			})}
-		  </ul>
-		</div>
-	  )}
 
 	  {/* Add a new Task */}
 	  <form
@@ -829,8 +857,8 @@ function IdeaDetail() {
 			const parentCompletedTime = parent.fields.CompletedTime || null;
 			const isTodayParent = parent.fields.Today || false;
 
-			// Milestones for this top-level task
-			const parentMilestones = getMilestonesForTask(parent);
+			// Single milestone for this parent
+			const parentMilestone = getMilestoneForTask(parent);
 
 			// Subtasks
 			const childTasks = subtasksByParent[parent.fields.TaskID] || [];
@@ -896,36 +924,21 @@ function IdeaDetail() {
 				  )}
 				</div>
 
-				{/* MILESTONES for THIS PARENT TASK */}
-				{parentMilestones.length > 0 ? (
-				  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
-					<h4 className="font-semibold text-sm">Milestones:</h4>
-					<ul className="list-disc list-inside">
-					  {parentMilestones.map((m) => (
-						<li key={m.id} className="mt-1">
-						  <span className="font-medium">
-							{m.fields.MilestoneName}
-						  </span>{" "}
-						  <span className="text-xs text-gray-500">
-							(Target:{" "}
-							{m.fields.MilestoneTime
-							  ? new Date(m.fields.MilestoneTime).toLocaleString()
-							  : "No date"}
-							)
-						  </span>
-						  {" – "}
-						  <em className="text-blue-600 text-xs">
-							{getTimeLeftString(m)}
-						  </em>
-						</li>
-					  ))}
-					</ul>
-				  </div>
-				) : (
-				  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
-					<p className="text-sm text-gray-500">No milestones yet.</p>
-				  </div>
-				)}
+				{/* MILESTONE for THIS PARENT TASK */}
+				<div className="ml-6 mt-2 pl-3 border-l border-gray-200">
+				  <h4 className="font-semibold text-sm">Milestone:</h4>
+				  {parentMilestone ? (
+					<p className="text-sm">
+					  <strong>{parentMilestone.fields.MilestoneName}</strong>
+					</p>
+				  ) : (
+					<p className="text-sm text-blue-600 underline cursor-pointer"
+					  onClick={() => handlePickMilestone(parent)}
+					>
+					  No milestone yet. (Click to add)
+					</p>
+				  )}
+				</div>
 
 				{/* SUBTASK LIST */}
 				{childTasks.length > 0 && (
@@ -936,9 +949,7 @@ function IdeaDetail() {
 					{childTasks.map((sub) => {
 					  const subCompleted = sub.fields.Completed || false;
 					  const subCompletedTime = sub.fields.CompletedTime || null;
-
-					  // Milestones for this subtask
-					  const subMilestones = getMilestonesForTask(sub);
+					  const subMilestone = getMilestoneForTask(sub);
 
 					  return (
 						<li
@@ -1000,42 +1011,26 @@ function IdeaDetail() {
 							</div>
 						  </div>
 
-						  {/* Milestones for THIS Subtask */}
-						  {subMilestones.length > 0 ? (
-							<div className="ml-6 mt-1 pl-3 border-l border-gray-200">
-							  <h4 className="font-semibold text-sm">
-								Milestones:
-							  </h4>
-							  <ul className="list-disc list-inside">
-								{subMilestones.map((m) => (
-								  <li key={m.id} className="mt-1">
-									<span className="font-medium">
-									  {m.fields.MilestoneName}
-									</span>{" "}
-									<span className="text-xs text-gray-500">
-									  (Target:{" "}
-									  {m.fields.MilestoneTime
-										? new Date(
-											m.fields.MilestoneTime
-										  ).toLocaleString()
-										: "No date"}
-									  )
-									</span>
-									{" – "}
-									<em className="text-blue-600 text-xs">
-									  {getTimeLeftString(m)}
-									</em>
-								  </li>
-								))}
-							  </ul>
-							</div>
-						  ) : (
-							<div className="ml-6 mt-1 pl-3 border-l border-gray-200">
-							  <p className="text-sm text-gray-500">
-								No milestones yet.
+						  {/* MILESTONE for this subtask */}
+						  <div className="ml-6 mt-1 pl-3 border-l border-gray-200">
+							<h4 className="font-semibold text-sm">
+							  Milestone:
+							</h4>
+							{subMilestone ? (
+							  <p className="text-sm">
+								<strong>
+								  {subMilestone.fields.MilestoneName}
+								</strong>
 							  </p>
-							</div>
-						  )}
+							) : (
+							  <p
+								className="text-sm text-blue-600 underline cursor-pointer"
+								onClick={() => handlePickMilestone(sub)}
+							  >
+								No milestone yet. (Click to add)
+							  </p>
+							)}
+						  </div>
 						</li>
 					  );
 					})}
