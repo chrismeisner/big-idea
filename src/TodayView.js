@@ -1,6 +1,6 @@
 // File: /Users/chrismeisner/Projects/big-idea/src/TodayView.js
-
 // File: /src/TodayView.js
+
 import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import { Link } from "react-router-dom";
@@ -8,7 +8,9 @@ import Sortable from "sortablejs";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
 function TodayView() {
+  // --------------------------------------------------------------------------
   // State
+  // --------------------------------------------------------------------------
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,17 +20,16 @@ function TodayView() {
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
 
-  // For creating a new subtask name (if needed)
+  // For creating new subtask input (if needed)
   const [newSubtaskName, setNewSubtaskName] = useState({});
 
-  // We’ll have a top-level Sortable for relevant Ideas
+  // We'll have a top-level Sortable for relevant Ideas
   const ideasListRef = useRef(null);
 
-  // We’ll also store a ref for each Idea's parent tasks UL
+  // We'll also store a ref for each Idea's "parent tasks" UL
   const tasksSortableRefs = useRef({});
 
-  // For each parent task's subtask UL, we also store refs
-  const subtaskRefs = useRef({});
+  // And a ref for each parent's subtask UL
   const subtaskSortableRefs = useRef({});
 
   // Airtable credentials
@@ -36,7 +37,7 @@ function TodayView() {
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   // --------------------------------------------------------------------------
-  // 1) Fetch tasks + ideas => BOTH sorted by "OrderToday"
+  // 1) Fetch tasks + ideas => BOTH sorted by "OrderToday" and "SubOrder"
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchData = async () => {
@@ -69,7 +70,7 @@ function TodayView() {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// B) Fetch Ideas, also sorted by "OrderToday" if you want
+		// B) Fetch Ideas, also sorted by "OrderToday"
 		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas?sort%5B0%5D%5Bfield%5D=OrderToday&sort%5B0%5D%5Bdirection%5D=asc`;
 		const ideasResp = await fetch(ideasUrl, {
 		  headers: { Authorization: `Bearer ${apiKey}` },
@@ -111,11 +112,13 @@ function TodayView() {
 	}
   });
 
-  // We only show ideas that have at least one "parent task" with Today=true
+  // We'll show only ideas that have at least one parent task with Today=true
   const relevantIdeas = ideas.filter((idea) => {
 	const ideaId = idea.id;
 	const tasksForIdea = tasksByIdea[ideaId] || [];
-	return tasksForIdea.some((tsk) => tsk.fields.Today && !tsk.fields.ParentTask);
+	return tasksForIdea.some(
+	  (tsk) => tsk.fields.Today && !tsk.fields.ParentTask
+	);
   });
 
   // --------------------------------------------------------------------------
@@ -141,24 +144,23 @@ function TodayView() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// 1) reorder only the relevant ideas array
+	// reorder only the relevant ideas
 	const updated = [...relevantIdeas];
 	const [moved] = updated.splice(oldIndex, 1);
 	updated.splice(newIndex, 0, moved);
 
-	// 2) merge them back with non-relevant
+	// merge them back with non-relevant
 	const nonRelevant = ideas.filter((id) => !relevantIdeas.includes(id));
 	const reordered = [...nonRelevant, ...updated];
 
-	// 3) reassign "OrderToday" for each idea
+	// reassign "OrderToday"
 	reordered.forEach((idea, i) => {
 	  idea.fields.OrderToday = i + 1;
 	});
 
-	// 4) set state
 	setIdeas(reordered);
 
-	// 5) patch to Airtable
+	// patch to Airtable
 	updateIdeasOrderInAirtable(reordered).catch((err) => {
 	  console.error("Failed to update ideas order in Airtable:", err);
 	  setError("Failed to reorder ideas. Please try again.");
@@ -174,6 +176,7 @@ function TodayView() {
 	  fields: { OrderToday: idea.fields.OrderToday },
 	}));
 
+	// Patch in chunks of 10 if needed
 	const chunkSize = 10;
 	for (let i = 0; i < records.length; i += chunkSize) {
 	  const chunk = records.slice(i, i + chunkSize);
@@ -186,9 +189,7 @@ function TodayView() {
 		body: JSON.stringify({ records: chunk }),
 	  });
 	  if (!resp.ok) {
-		throw new Error(
-		  `Airtable error: ${resp.status} ${resp.statusText}`
-		);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	}
   };
@@ -223,7 +224,7 @@ function TodayView() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// 1) filter parent tasks for that idea
+	// filter parent tasks for that idea
 	const tasksForIdea = tasksByIdea[ideaId] || [];
 	const parentToday = tasksForIdea.filter(
 	  (t) => t.fields.Today && !t.fields.ParentTask
@@ -232,30 +233,25 @@ function TodayView() {
 	if (oldIndex < 0 || oldIndex >= parentToday.length) return;
 	if (newIndex < 0 || newIndex >= parentToday.length) return;
 
-	// 2) reorder
 	const updated = [...parentToday];
 	const [moved] = updated.splice(oldIndex, 1);
 	if (!moved) return;
 	updated.splice(newIndex, 0, moved);
 
-	// 3) reassign "OrderToday"
+	// reassign "OrderToday"
 	updated.forEach((task, idx) => {
 	  task.fields.OrderToday = idx + 1;
 	});
 
-	// 4) merge with all other tasks
+	// merge with all other tasks
 	const otherTasks = tasks.filter(
 	  (t) =>
-		!(
-		  t.fields.IdeaID === ideaId &&
-		  t.fields.Today &&
-		  !t.fields.ParentTask
-		)
+		!(t.fields.IdeaID === ideaId && t.fields.Today && !t.fields.ParentTask)
 	);
 	const reordered = [...otherTasks, ...updated];
 	setTasks(reordered);
 
-	// 5) patch
+	// patch
 	updateTasksOrderInAirtable(updated).catch((err) => {
 	  console.error("Failed to update tasks order in Airtable:", err);
 	  setError("Failed to reorder tasks. Please try again.");
@@ -283,9 +279,7 @@ function TodayView() {
 		body: JSON.stringify({ records: chunk }),
 	  });
 	  if (!resp.ok) {
-		throw new Error(
-		  `Airtable error: ${resp.status} ${resp.statusText}`
-		);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	}
   };
@@ -323,30 +317,28 @@ function TodayView() {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// 1) find all subtasks for that parent
 	const parentId = parentTask.fields.TaskID;
 	const mySubtasks = tasks.filter((t) => t.fields.ParentTask === parentId);
 
 	if (oldIndex < 0 || oldIndex >= mySubtasks.length) return;
 	if (newIndex < 0 || newIndex >= mySubtasks.length) return;
 
-	// 2) reorder
 	const updated = [...mySubtasks];
 	const [moved] = updated.splice(oldIndex, 1);
 	if (!moved) return;
 	updated.splice(newIndex, 0, moved);
 
-	// 3) reassign "SubOrder"
+	// reassign "SubOrder"
 	updated.forEach((sub, idx) => {
 	  sub.fields.SubOrder = idx + 1;
 	});
 
-	// 4) merge with the rest
+	// merge with the rest
 	const others = tasks.filter((t) => t.fields.ParentTask !== parentId);
 	const newAll = [...others, ...updated];
 	setTasks(newAll);
 
-	// 5) patch
+	// patch
 	updateSubtaskOrderInAirtable(updated).catch((err) => {
 	  console.error("Failed to update subtask order in Airtable:", err);
 	  setError("Failed to reorder subtasks. Please try again.");
@@ -384,14 +376,11 @@ function TodayView() {
   // 6) Toggling Completed / Today
   // --------------------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
-	// 1) Grab current "Completed" state
 	const wasCompleted = task.fields.Completed || false;
-	// 2) New value
-	const newCompletedValue = !wasCompleted;
-	// 3) If newly completed => set CompletedTime, else null
-	const newCompletedTime = newCompletedValue ? new Date().toISOString() : null;
+	const newValue = !wasCompleted;
+	const newTime = newValue ? new Date().toISOString() : null;
 
-	// 4) Update local state (optimistic)
+	// local update (optimistic)
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -399,16 +388,19 @@ function TodayView() {
 			  ...t,
 			  fields: {
 				...t.fields,
-				Completed: newCompletedValue,
-				CompletedTime: newCompletedTime,
+				Completed: newValue,
+				CompletedTime: newTime,
 			  },
 			}
 		  : t
 	  )
 	);
 
-	// 5) Patch to Airtable
+	// patch to Airtable
 	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -420,8 +412,8 @@ function TodayView() {
 			{
 			  id: task.id,
 			  fields: {
-				Completed: newCompletedValue,
-				CompletedTime: newCompletedTime,
+				Completed: newValue,
+				CompletedTime: newTime,
 			  },
 			},
 		  ],
@@ -435,8 +427,7 @@ function TodayView() {
 	} catch (err) {
 	  console.error("Error toggling completion:", err);
 	  setError("Failed to toggle completion. Please try again.");
-
-	  // Revert if needed
+	  // revert
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
@@ -457,11 +448,10 @@ function TodayView() {
   };
 
   const handleToggleToday = async (task) => {
-	// 1) Grab current value
 	const wasToday = task.fields.Today || false;
 	const newValue = !wasToday;
 
-	// 2) Local update
+	// local update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -470,8 +460,11 @@ function TodayView() {
 	  )
 	);
 
-	// 3) Patch
+	// patch
 	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -497,7 +490,6 @@ function TodayView() {
 	} catch (err) {
 	  console.error("Error toggling Today:", err);
 	  setError("Failed to toggle Today. Please try again.");
-
 	  // revert
 	  setTasks((prev) =>
 		prev.map((t) =>
@@ -510,7 +502,7 @@ function TodayView() {
   };
 
   // --------------------------------------------------------------------------
-  // 7) Inline editing
+  // 7) Inline editing => "XXX" => delete parent + orphan children
   // --------------------------------------------------------------------------
   const startEditingTask = (task) => {
 	setEditingTaskId(task.id);
@@ -522,7 +514,13 @@ function TodayView() {
   };
 
   const commitEdit = async (taskId) => {
-	// local
+	// If user typed "XXX", we do a special delete
+	if (editingTaskName.trim().toUpperCase() === "XXX") {
+	  await handleDeleteTask(taskId);
+	  return;
+	}
+
+	// Normal rename
 	const updatedTasks = tasks.map((t) =>
 	  t.id === taskId
 		? { ...t, fields: { ...t.fields, TaskName: editingTaskName } }
@@ -532,8 +530,11 @@ function TodayView() {
 	setEditingTaskId(null);
 	setEditingTaskName("");
 
-	// patch
+	// Patch to Airtable
 	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -568,15 +569,105 @@ function TodayView() {
   };
 
   // --------------------------------------------------------------------------
-  // 8) Create a NEW subtask
+  // 8) handleDeleteTask => remove parent, orphan children
   // --------------------------------------------------------------------------
-  const handleCreateSubtask = async (parentTask) => {
-	// your code if you want it
-	// but presumably you want to set "SubOrder"
+  const handleDeleteTask = async (taskId) => {
+	const toDelete = tasks.find((t) => t.id === taskId);
+	if (!toDelete) return;
+
+	const parentUniqueID = toDelete.fields.TaskID; // parent's unique ID
+
+	// remove parent from local
+	setTasks((prev) => prev.filter((t) => t.id !== taskId));
+
+	// locate child tasks referencing the parent's TaskID => clear their ParentTask
+	const childTasks = tasks.filter(
+	  (t) => t.fields.ParentTask === parentUniqueID
+	);
+	if (childTasks.length > 0) {
+	  try {
+		const recordsToPatch = childTasks.map((ct) => ({
+		  id: ct.id,
+		  fields: {
+			ParentTask: "", // orphan them
+		  },
+		}));
+
+		// patch in chunks if needed
+		const chunkSize = 10;
+		for (let i = 0; i < recordsToPatch.length; i += chunkSize) {
+		  const chunk = recordsToPatch.slice(i, i + chunkSize);
+		  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+			method: "PATCH",
+			headers: {
+			  Authorization: `Bearer ${apiKey}`,
+			  "Content-Type": "application/json",
+			},
+			body: JSON.stringify({ records: chunk }),
+		  });
+		  if (!patchResp.ok) {
+			throw new Error(
+			  `Airtable error (clear children): ${patchResp.status} ${patchResp.statusText}`
+			);
+		  }
+		}
+
+		// also update local => remove ParentTask from children
+		setTasks((prev) =>
+		  prev.map((ct) =>
+			ct.fields.ParentTask === parentUniqueID
+			  ? {
+				  ...ct,
+				  fields: {
+					...ct.fields,
+					ParentTask: "",
+				  },
+				}
+			  : ct
+		  )
+		);
+	  } catch (err) {
+		console.error("Error removing ParentTask from child tasks:", err);
+		// optionally revert local changes if needed
+	  }
+	}
+
+	// now delete the parent from Airtable
+	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  const delUrl = `https://api.airtable.com/v0/${baseId}/Tasks/${taskId}`;
+	  const resp = await fetch(delUrl, {
+		method: "DELETE",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		},
+	  });
+	  if (!resp.ok) {
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	  console.log(`Task ${taskId} was deleted (due to 'XXX'), children orphaned.`);
+	} catch (err) {
+	  console.error("Error deleting task from Airtable:", err);
+	  setError("Failed to delete the task from Airtable.");
+	}
   };
 
   // --------------------------------------------------------------------------
-  // 9) Render
+  // 9) Create a NEW subtask
+  // --------------------------------------------------------------------------
+  const handleCreateSubtask = async (parentTask) => {
+	// Example usage; if you'd like a form per parent, etc.
+	// Setting "SubOrder", or letting the user type a name, etc.
+	// For brevity, we won't fill out the entire code here, 
+	// but you'd do similarly to IdeaDetail's `createSubtask`.
+	console.log("handleCreateSubtask for parent:", parentTask.fields.TaskName);
+	// ...
+  };
+
+  // --------------------------------------------------------------------------
+  // Render
   // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading tasks for Today...</p>;
@@ -603,7 +694,7 @@ function TodayView() {
 		&larr; Back to your Ideas
 	  </Link>
 
-	  {/* If you want to reorder Ideas, wrap them in a <ul ref=ideasListRef> */}
+	  {/* Sortable UL for the RELEVANT IDEAS */}
 	  <ul ref={ideasListRef} className="mt-4 space-y-4">
 		{relevantIdeas.map((idea) => {
 		  const ideaId = idea.id;
@@ -615,10 +706,8 @@ function TodayView() {
 		  );
 
 		  return (
-			<li
-			  key={ideaId}
-			  className="bg-gray-50 p-3 rounded shadow"
-			>
+			<li key={ideaId} className="bg-gray-50 p-3 rounded shadow">
+			  {/* "Handle" to reorder the Idea block */}
 			  <div
 				className="idea-drag-handle cursor-grab active:cursor-grabbing text-gray-400 flex items-center space-x-2 mb-1"
 				title="Drag to reorder ideas"
@@ -627,7 +716,7 @@ function TodayView() {
 				<h3 className="text-xl font-semibold">{ideaTitle}</h3>
 			  </div>
 
-			  {/* Parent tasks UL */}
+			  {/* Sortable UL for parent tasks */}
 			  <ul
 				id={`tasks-ul-${idea.id}`}
 				className="border rounded divide-y divide-gray-200"
@@ -636,11 +725,13 @@ function TodayView() {
 				  const isEditing = editingTaskId === task.id;
 				  const isCompleted = task.fields.Completed || false;
 				  const completedTime = task.fields.CompletedTime || null;
+
+				  // All subtasks for this parent
 				  const subList = subtasksByParent[task.fields.TaskID] || [];
 
 				  return (
 					<li key={task.id} className="p-4 hover:bg-gray-50">
-					  {/* Parent row */}
+					  {/* PARENT TASK ROW */}
 					  <div className="flex items-center">
 						<div
 						  className="task-drag-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
@@ -655,13 +746,16 @@ function TodayView() {
 						  checked={isCompleted}
 						  onChange={() => handleToggleCompleted(task)}
 						/>
+						{/* Name (inline edit => "XXX" => delete) */}
 						<div className="flex-1">
 						  {isEditing ? (
 							<input
 							  autoFocus
 							  className="border-b border-gray-300 focus:outline-none"
 							  value={editingTaskName}
-							  onChange={(e) => handleEditNameChange(e.target.value)}
+							  onChange={(e) =>
+								handleEditNameChange(e.target.value)
+							  }
 							  onBlur={() => commitEdit(task.id)}
 							  onKeyDown={(e) => {
 								if (e.key === "Enter") commitEdit(task.id);
@@ -671,7 +765,9 @@ function TodayView() {
 						  ) : (
 							<span
 							  className={`cursor-pointer ${
-								isCompleted ? "line-through text-gray-500" : ""
+								isCompleted
+								  ? "line-through text-gray-500"
+								  : ""
 							  }`}
 							  onClick={() => startEditingTask(task)}
 							>
@@ -685,7 +781,7 @@ function TodayView() {
 							</span>
 						  )}
 						</div>
-						{/* "Today" toggle? */}
+						{/* Today toggle */}
 						<div className="ml-2 flex items-center space-x-1">
 						  <input
 							type="checkbox"
@@ -696,7 +792,7 @@ function TodayView() {
 						</div>
 					  </div>
 
-					  {/* Subtasks => each subtask sorted by "SubOrder" */}
+					  {/* SUBTASKS => each sorted by "SubOrder" */}
 					  {subList.length > 0 && (
 						<ul
 						  id={`subtasks-ul-${task.id}`}
@@ -705,7 +801,8 @@ function TodayView() {
 						  {subList.map((sub) => {
 							const subIsEditing = editingTaskId === sub.id;
 							const subCompleted = sub.fields.Completed || false;
-							const subCompletedTime = sub.fields.CompletedTime || null;
+							const subCompletedTime =
+							  sub.fields.CompletedTime || null;
 							return (
 							  <li
 								key={sub.id}
@@ -729,11 +826,14 @@ function TodayView() {
 									  autoFocus
 									  className="border-b border-gray-300 focus:outline-none"
 									  value={editingTaskName}
-									  onChange={(e) => handleEditNameChange(e.target.value)}
+									  onChange={(e) =>
+										handleEditNameChange(e.target.value)
+									  }
 									  onBlur={() => commitEdit(sub.id)}
 									  onKeyDown={(e) => {
 										if (e.key === "Enter") commitEdit(sub.id);
-										else if (e.key === "Escape") cancelEditing();
+										else if (e.key === "Escape")
+										  cancelEditing();
 									  }}
 									/>
 								  ) : (
@@ -762,9 +862,9 @@ function TodayView() {
 						</ul>
 					  )}
 
-					  {/* Add new subtask form */}
+					  {/* Add new subtask form (optional) */}
 					  <div className="ml-6 mt-2 pl-3 border-l border-gray-200">
-						{/* your create subtask form */}
+						{/* e.g. a form or button to create a subtask */}
 					  </div>
 					</li>
 				  );
