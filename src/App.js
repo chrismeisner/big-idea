@@ -10,7 +10,10 @@ import MainContent from "./MainContent";
 import Onboarding from "./Onboarding";
 import IdeaDetail from "./IdeaDetail";
 import TodayView from "./TodayView";
-import Milestones from "./Milestones"; // <--- NEW import for your Milestones page
+import Milestones from "./Milestones";
+
+// NEW IMPORT: the new MilestoneDetail component
+import MilestoneDetail from "./MilestoneDetail";
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -82,8 +85,11 @@ function App() {
         {/* /today => TodayView */}
         <Route path="/today" element={<TodayView />} />
 
-        {/* /milestones => New Milestones page */}
+        {/* /milestones => Milestones page */}
         <Route path="/milestones" element={<Milestones />} />
+
+        {/* NEW ROUTE: /milestones/:milestoneId => MilestoneDetail */}
+        <Route path="/milestones/:milestoneId" element={<MilestoneDetail />} />
       </Routes>
     </Router>
   );

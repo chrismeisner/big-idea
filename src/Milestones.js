@@ -7,6 +7,7 @@ import airtableBase from "./airtable"; // your configured Airtable instance
 
 function Milestones() {
   const [milestones, setMilestones] = useState([]);
+  const [tasks, setTasks] = useState([]); // NEW: We'll store all tasks here
 
   // Form fields
   const [newMilestoneName, setNewMilestoneName] = useState("");
@@ -21,10 +22,11 @@ function Milestones() {
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   // --------------------------------------------------------------------------
-  // 1) Fetch all Milestones on mount, sorted by "Created" descending
+  // 1) Fetch all Milestones & all Tasks on mount
+  //    We do it in one effect so we only set loading/error states once.
   // --------------------------------------------------------------------------
   useEffect(() => {
-	const fetchMilestones = async () => {
+	const fetchData = async () => {
 	  if (!baseId || !apiKey) {
 		setError("Missing Airtable credentials.");
 		setLoading(false);
@@ -42,28 +44,42 @@ function Milestones() {
 
 		setLoading(true);
 
-		// Sort by Created (descending)
-		const resp = await fetch(
+		// 1) Fetch Milestones, sorted by Created desc
+		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones?sort[0][field]=Created&sort[0][direction]=desc`,
 		  {
 			headers: { Authorization: `Bearer ${apiKey}` },
 		  }
 		);
-		if (!resp.ok) {
-		  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		if (!milestonesResp.ok) {
+		  throw new Error(`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`);
 		}
+		const milestonesData = await milestonesResp.json();
 
-		const data = await resp.json();
-		setMilestones(data.records);
+		// 2) Fetch ALL tasks, so we can filter them by MilestoneID
+		const tasksResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Tasks`,
+		  {
+			headers: { Authorization: `Bearer ${apiKey}` },
+		  }
+		);
+		if (!tasksResp.ok) {
+		  throw new Error(`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`);
+		}
+		const tasksData = await tasksResp.json();
+
+		// Update state
+		setMilestones(milestonesData.records);
+		setTasks(tasksData.records);
 	  } catch (err) {
-		console.error("Error fetching milestones:", err);
-		setError("Failed to fetch milestones. Please try again.");
+		console.error("Error fetching milestones/tasks:", err);
+		setError("Failed to fetch milestones or tasks. Please try again.");
 	  } finally {
 		setLoading(false);
 	  }
 	};
 
-	fetchMilestones();
+	fetchData();
   }, [baseId, apiKey]);
 
   // --------------------------------------------------------------------------
@@ -216,20 +232,50 @@ function Milestones() {
 	  {milestones.length > 0 ? (
 		<ul className="divide-y divide-gray-200 border rounded">
 		  {milestones.map((m) => {
-			const { MilestoneName, MilestoneTime, MilestoneNotes } = m.fields;
+			const { MilestoneName, MilestoneTime } = m.fields;
+
+			// Filter tasks for this milestone
+			const tasksForThisMilestone = tasks.filter(
+			  (t) => t.fields.MilestoneID === m.id
+			);
+
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
-				<strong>{MilestoneName || "(Untitled)"}</strong>
-
+				{/* Link to the milestone's detail page */}
+				<Link
+				  to={`/milestones/${m.id}`}
+				  className="text-blue-600 underline font-semibold"
+				>
+				  {MilestoneName || "(Untitled)"}
+				</Link>
 				{MilestoneTime && (
 				  <span className="ml-2 text-xs text-gray-500">
 					(Due: {new Date(MilestoneTime).toLocaleString()})
 				  </span>
 				)}
 
-				{MilestoneNotes && (
-				  <p className="mt-1 text-sm text-gray-700 whitespace-pre-line">
-					{MilestoneNotes}
+				{/* Hide MilestoneNotes here, but show the tasks that reference this milestone */}
+				{tasksForThisMilestone.length > 0 ? (
+				  <ul className="mt-2 pl-5 list-disc text-sm text-gray-800">
+					{tasksForThisMilestone.map((task) => {
+					  const taskName = task.fields.TaskName || "(Untitled Task)";
+					  const isCompleted = task.fields.Completed;
+					  return (
+						<li key={task.id}>
+						  {isCompleted ? (
+							<span className="line-through text-gray-500">
+							  {taskName}
+							</span>
+						  ) : (
+							taskName
+						  )}
+						</li>
+					  );
+					})}
+				  </ul>
+				) : (
+				  <p className="text-sm text-gray-500 mt-2">
+					No tasks linked to this milestone yet.
 				  </p>
 				)}
 			  </li>
