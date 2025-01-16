@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import IdeaList from "./IdeaList";
-import MilestoneModal from "./MilestoneModal"; // <-- new import
+import MilestoneModal from "./MilestoneModal";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
 // Helper to chunk an array into subarrays of size `size`
@@ -16,7 +16,7 @@ function chunkArray(arr, size) {
   return result;
 }
 
-function MainContent() {
+function MainContent({ airtableUser }) {
   const [ideas, setIdeas] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [milestones, setMilestones] = useState([]);
@@ -35,7 +35,7 @@ function MainContent() {
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
 
-  // Airtable
+  // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
@@ -43,57 +43,53 @@ function MainContent() {
   const ideasListRef = useRef(null);
   const sortableRef = useRef(null);
 
-  // --------------------------------------------------------------------------
-  // 1) Fetch Ideas, Tasks, Milestones once on mount
-  // --------------------------------------------------------------------------
+  // ----------------------------------------------------------------------------
+  // 1) We already have `airtableUser` => get userId from userRecord.fields.UserID
+  // ----------------------------------------------------------------------------
+  const userId = airtableUser?.fields?.UserID || null;
+
   useEffect(() => {
-	const fetchIdeasAndTasks = async () => {
-	  console.log("Fetching ideas, tasks, and milestones...");
+	// Quick guard if no userId
+	if (!userId) {
+	  setError("No user ID found. Please log in again.");
+	  setLoading(false);
+	  return;
+	}
+
+	// Also guard for missing env credentials
+	if (!baseId || !apiKey) {
+	  setError("Missing Airtable credentials.");
+	  setLoading(false);
+	  return;
+	}
+
+	async function fetchData() {
+	  console.log("[MainContent] Starting fetchData...");
 	  setLoading(true);
 	  setError(null);
 
-	  if (!baseId || !apiKey) {
-		setError("Missing Airtable credentials.");
-		setLoading(false);
-		return;
-	  }
-
 	  try {
-		const auth = getAuth();
-		const currentUser = auth.currentUser;
-		if (!currentUser) {
-		  setError("No logged-in user.");
-		  setLoading(false);
-		  return;
-		}
+		// A) Fetch Ideas belonging to this user by userId
+		console.log(`[MainContent] Searching the Ideas table with UserID => ${userId}`);
+		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas?sort[0][field]=Order&sort[0][direction]=asc&filterByFormula={UserID}="${userId}"`;
+		console.log("[MainContent] ideasUrl =>", ideasUrl);
 
-		// Fetch Ideas
-		console.log("Fetching ideas from Airtable...");
-		const ideasResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Ideas?sort[0][field]=Order&sort[0][direction]=asc`,
-		  {
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			},
-		  }
-		);
+		const ideasResp = await fetch(ideasUrl, {
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+		  },
+		});
 		if (!ideasResp.ok) {
 		  throw new Error(
-			`Airtable error: ${ideasResp.status} ${ideasResp.statusText}`
+			`[MainContent] Airtable error (Ideas): ${ideasResp.status} ${ideasResp.statusText}`
 		  );
 		}
 		const ideasData = await ideasResp.json();
-		console.log("Fetched ideas: ", ideasData.records);
+		console.log("[MainContent] Fetched ideas =>", ideasData.records);
+		setIdeas(ideasData.records);
 
-		// Filter ideas by user phone if desired
-		const userPhoneNumber = currentUser.phoneNumber;
-		const userIdeas = ideasData.records.filter(
-		  (rec) => rec.fields.UserMobile === userPhoneNumber
-		);
-		setIdeas(userIdeas);
-
-		// Fetch Tasks
-		console.log("Fetching tasks...");
+		// B) Fetch Tasks
+		console.log("[MainContent] Fetching tasks (all)...");
 		const tasksResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Tasks`,
 		  {
@@ -104,14 +100,15 @@ function MainContent() {
 		);
 		if (!tasksResp.ok) {
 		  throw new Error(
-			`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+			`[MainContent] Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
 		  );
 		}
 		const tasksData = await tasksResp.json();
+		console.log("[MainContent] Fetched tasks =>", tasksData.records);
 		setTasks(tasksData.records);
 
-		// Fetch Milestones
-		console.log("Fetching milestones...");
+		// C) Fetch Milestones
+		console.log("[MainContent] Fetching milestones...");
 		const milestonesResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Milestones`,
 		  {
@@ -122,44 +119,44 @@ function MainContent() {
 		);
 		if (!milestonesResp.ok) {
 		  throw new Error(
-			`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`
+			`[MainContent] Airtable error (Milestones): ${milestonesResp.status} ${milestonesResp.statusText}`
 		  );
 		}
 		const milestonesData = await milestonesResp.json();
+		console.log("[MainContent] Fetched milestones =>", milestonesData.records);
 		setMilestones(milestonesData.records);
+
 	  } catch (err) {
-		console.error("Error fetching data from Airtable:", err);
+		console.error("[MainContent] Error fetching data:", err);
 		setError("Failed to fetch data. Please try again later.");
 	  } finally {
 		setLoading(false);
 	  }
-	};
+	}
 
-	fetchIdeasAndTasks();
-  }, [baseId, apiKey]);
+	fetchData();
+  }, [userId, baseId, apiKey]);
 
   // --------------------------------------------------------------------------
   // 2) Initialize Sortable after ideas are loaded
   // --------------------------------------------------------------------------
   useEffect(() => {
 	if (!loading && ideas.length > 0 && ideasListRef.current && !sortableRef.current) {
-	  console.log("Initializing Sortable.js for Ideas");
+	  console.log("[MainContent] Initializing Sortable.js for Ideas list...");
 	  sortableRef.current = new Sortable(ideasListRef.current, {
 		animation: 150,
 		handle: ".grab-idea-handle",
 		onEnd: handleSortEnd,
 	  });
-	  console.log("Sortable.js initialized");
+	  console.log("[MainContent] Sortable.js initialized");
 	}
   }, [loading, ideas]);
 
-  // --------------------------------------------------------------------------
-  // 3) Cleanup Sortable on unmount
-  // --------------------------------------------------------------------------
+  // Cleanup Sortable on unmount
   useEffect(() => {
 	return () => {
 	  if (sortableRef.current) {
-		console.log("Destroying Sortable.js instance on unmount");
+		console.log("[MainContent] Destroying Sortable.js instance on unmount");
 		sortableRef.current.destroy();
 		sortableRef.current = null;
 	  }
@@ -167,10 +164,10 @@ function MainContent() {
   }, []);
 
   // --------------------------------------------------------------------------
-  // 4) Reorder local + patch Airtable
+  // 3) Reorder local + patch Airtable
   // --------------------------------------------------------------------------
   const handleSortEnd = async (evt) => {
-	console.log("Drag ended:", evt);
+	console.log("[MainContent] handleSortEnd =>", evt);
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
@@ -178,6 +175,7 @@ function MainContent() {
 	const [movedItem] = updated.splice(oldIndex, 1);
 	updated.splice(newIndex, 0, movedItem);
 
+	// Reassign "Order"
 	const reordered = updated.map((idea, i) => ({
 	  ...idea,
 	  fields: {
@@ -189,20 +187,18 @@ function MainContent() {
 	setIdeas(reordered);
 
 	try {
+	  console.log("[MainContent] Patching updated idea order to Airtable...");
 	  await updateIdeasOrderInAirtable(reordered);
-	  console.log("Successfully updated Airtable with new order");
+	  console.log("[MainContent] Successfully updated Airtable with new order");
 	} catch (err) {
-	  console.error("Error reordering ideas in Airtable:", err);
+	  console.error("[MainContent] Error reordering ideas in Airtable:", err);
 	  setError("Failed to reorder ideas. Please try again later.");
 	}
   };
 
-  // --------------------------------------------------------------------------
-  // 4a) Patch multiple ideas' Order in Airtable (with chunking)
-  // --------------------------------------------------------------------------
   const updateIdeasOrderInAirtable = async (list) => {
 	if (!baseId || !apiKey) {
-	  throw new Error("Missing Airtable credentials for reorder update");
+	  throw new Error("[MainContent] Missing Airtable credentials for reorder update");
 	}
 
 	const toUpdate = list.map((idea) => ({
@@ -214,7 +210,6 @@ function MainContent() {
 
 	const chunks = chunkArray(toUpdate, 10);
 	for (const chunk of chunks) {
-	  console.log("Patching chunk to Airtable:", chunk);
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "PATCH",
 		headers: {
@@ -233,33 +228,33 @@ function MainContent() {
 		} catch {
 		  errorBody = {};
 		}
-		console.error("Airtable error body:", errorBody);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		console.error("[MainContent] Airtable error body:", errorBody);
+		throw new Error(
+		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 	}
   };
 
   // --------------------------------------------------------------------------
-  // 5) Create a new Idea at Order=1, shifting all others
+  // 4) Create a new Idea at Order=1, shifting all others
   // --------------------------------------------------------------------------
   const handleCreateIdea = async (e) => {
 	e.preventDefault();
 	setError(null);
 
-	console.log("Creating new idea at Order=1:", newIdeaTitle, newIdeaSummary);
-
+	if (!newIdeaTitle.trim()) return;
+	if (!userId) {
+	  setError("No user ID. Please log in again.");
+	  return;
+	}
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
 
 	try {
-	  const auth = getAuth();
-	  const currentUser = auth.currentUser;
-	  if (!currentUser) {
-		setError("No logged-in user.");
-		return;
-	  }
+	  console.log("[MainContent] Creating new Idea =>", newIdeaTitle, newIdeaSummary);
 
 	  // 1) Shift all existing ideas' Order by +1
 	  const shifted = ideas.map((idea) => ({
@@ -269,14 +264,13 @@ function MainContent() {
 		  Order: idea.fields.Order + 1,
 		},
 	  }));
-
-	  // 2) Patch them in Airtable
 	  if (shifted.length > 0) {
+		console.log("[MainContent] Patching shifted ideas to Airtable...");
 		await updateIdeasOrderInAirtable(shifted);
 	  }
 
-	  // 3) Create the new idea with Order=1
-	  const userPhoneNumber = currentUser.phoneNumber;
+	  // 2) Create the new idea with Order=1
+	  console.log("[MainContent] Creating new idea record in Airtable with order=1...");
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "POST",
 		headers: {
@@ -289,7 +283,8 @@ function MainContent() {
 			  fields: {
 				IdeaTitle: newIdeaTitle,
 				IdeaSummary: newIdeaSummary,
-				UserMobile: userPhoneNumber,
+				UserMobile: airtableUser.fields.Mobile,
+				UserID: userId,
 				Order: 1,
 			  },
 			},
@@ -304,28 +299,30 @@ function MainContent() {
 		} catch {
 		  errorBody = {};
 		}
-		console.error("Airtable returned an error body:", errorBody);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		console.error("[MainContent] Airtable returned an error body:", errorBody);
+		throw new Error(
+		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 
 	  const data = await resp.json();
 	  const createdRecord = data.records[0];
-	  console.log("New idea created in Airtable:", createdRecord);
+	  console.log("[MainContent] New idea created in Airtable =>", createdRecord);
 
-	  // 4) Prepend the new idea in local state
+	  // 3) Prepend the new idea in local state
 	  setIdeas([createdRecord, ...shifted]);
 
 	  // Clear input fields
 	  setNewIdeaTitle("");
 	  setNewIdeaSummary("");
 	} catch (err) {
-	  console.error("Error creating idea:", err);
+	  console.error("[MainContent] Error creating idea:", err);
 	  setError("Failed to create idea. Please try again later.");
 	}
   };
 
   // --------------------------------------------------------------------------
-  // 6) Delete an Idea (and its associated tasks)
+  // 5) Delete an Idea (and its associated tasks)
   // --------------------------------------------------------------------------
   const handleDeleteClick = (ideaId) => {
 	if (!deleteConfirm[ideaId]) {
@@ -337,11 +334,13 @@ function MainContent() {
 
   async function deleteIdea(ideaId) {
 	if (!baseId || !apiKey) {
-	  setError("Missing Airtable credentials.");
+	  setError("[MainContent] Missing Airtable credentials for deleteIdea.");
 	  return;
 	}
 
 	try {
+	  console.log("[MainContent] Deleting idea =>", ideaId);
+
 	  // 1) Fetch tasks referencing this Idea
 	  const tasksResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"`,
@@ -353,11 +352,12 @@ function MainContent() {
 	  );
 	  if (!tasksResp.ok) {
 		throw new Error(
-		  `Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+		  `[MainContent] Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
 		);
 	  }
 	  const tasksData = await tasksResp.json();
 	  const taskRecords = tasksData.records;
+	  console.log("[MainContent] Found tasks to delete =>", taskRecords);
 
 	  // 2) Batch-delete the tasks
 	  if (taskRecords.length > 0) {
@@ -365,7 +365,9 @@ function MainContent() {
 		for (const chunk of taskChunks) {
 		  const idsToDelete = chunk.map((rec) => rec.id);
 		  const deleteUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
-		  idsToDelete.forEach((id) => deleteUrl.searchParams.append("records[]", id));
+		  idsToDelete.forEach((id) =>
+			deleteUrl.searchParams.append("records[]", id)
+		  );
 
 		  const deleteResp = await fetch(deleteUrl.toString(), {
 			method: "DELETE",
@@ -375,24 +377,24 @@ function MainContent() {
 		  });
 		  if (!deleteResp.ok) {
 			throw new Error(
-			  `Airtable error: ${deleteResp.status} ${deleteResp.statusText}`
+			  `[MainContent] Airtable error (delete tasks): ${deleteResp.status} ${deleteResp.statusText}`
 			);
 		  }
 		}
 	  }
 
 	  // 3) Delete the Idea
-	  const resp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`,
-		{
-		  method: "DELETE",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-		  },
-		}
-	  );
+	  const ideaDelUrl = `https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`;
+	  const resp = await fetch(ideaDelUrl, {
+		method: "DELETE",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		},
+	  });
 	  if (!resp.ok) {
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		throw new Error(
+		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 
 	  // 4) Update local state
@@ -402,14 +404,15 @@ function MainContent() {
 		delete nextConfirm[ideaId];
 		return nextConfirm;
 	  });
+	  console.log("[MainContent] Successfully deleted idea + associated tasks.");
 	} catch (err) {
-	  console.error("Error deleting idea or tasks:", err);
+	  console.error("[MainContent] Error deleting idea or tasks:", err);
 	  setError("Failed to delete the idea and its tasks. Please try again.");
 	}
   }
 
   // --------------------------------------------------------------------------
-  // 7) Create a new Task => store the custom IdeaID as well
+  // 6) Create a new Task => store the custom IdeaID as well
   // --------------------------------------------------------------------------
   const createTask = async (ideaCustomId, taskName) => {
 	if (!baseId || !apiKey) {
@@ -417,7 +420,14 @@ function MainContent() {
 	  return;
 	}
 	try {
+	  console.log(
+		"[MainContent] Creating a new task => ideaCustomId:",
+		ideaCustomId,
+		"taskName:",
+		taskName
+	  );
 	  const orderValue = tasks.length + 1;
+
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -433,7 +443,6 @@ function MainContent() {
 				Order: orderValue,
 				Completed: false,
 				CompletedTime: null,
-				// MilestoneID empty by default
 			  },
 			},
 		  ],
@@ -447,30 +456,35 @@ function MainContent() {
 		} catch {
 		  errorBody = {};
 		}
-		console.error("Airtable error body:", errorBody);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		console.error("[MainContent] Airtable error body:", errorBody);
+		throw new Error(
+		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 
 	  const data = await resp.json();
 	  const newTask = data.records[0];
+	  console.log("[MainContent] Created new task record =>", newTask);
 	  setTasks((prev) => [...prev, newTask]);
 	} catch (err) {
-	  console.error("Error creating task:", err);
+	  console.error("[MainContent] Error creating task:", err);
 	  setError("Failed to create task. Please try again.");
 	}
   };
 
   // --------------------------------------------------------------------------
-  // 8) Handle picking/assigning a Milestone to a Task
+  // 7) Handle picking/assigning a Milestone to a Task
   // --------------------------------------------------------------------------
   const handlePickMilestone = (task) => {
-	// This sets the “active task” that we want to assign a milestone
+	console.log("[MainContent] handlePickMilestone =>", task.id);
 	setActiveTaskForMilestone(task);
 	setShowMilestoneModal(true);
   };
 
   const assignMilestoneToTask = async (milestone) => {
 	if (!activeTaskForMilestone) return;
+	console.log("[MainContent] assignMilestoneToTask => milestone:", milestone.id);
+
 	try {
 	  // local update
 	  const updated = tasks.map((t) =>
@@ -490,6 +504,10 @@ function MainContent() {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
+	  console.log(
+		"[MainContent] Patching MilestoneID to Airtable => task:",
+		activeTaskForMilestone.id
+	  );
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -509,11 +527,11 @@ function MainContent() {
 	  });
 	  if (!patchResp.ok) {
 		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		  `[MainContent] Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
 	  }
 	} catch (err) {
-	  console.error("Error assigning milestone:", err);
+	  console.error("[MainContent] Error assigning milestone:", err);
 	  setError("Failed to assign milestone. Please try again.");
 	} finally {
 	  setShowMilestoneModal(false);
@@ -533,7 +551,7 @@ function MainContent() {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
-	  {/* If the milestone modal is open, render it here */}
+	  {/* Milestone modal if open */}
 	  {showMilestoneModal && (
 		<MilestoneModal
 		  allMilestones={milestones}
@@ -595,14 +613,14 @@ function MainContent() {
 	  <IdeaList
 		ideas={ideas}
 		tasks={tasks}
-		milestones={milestones} // pass all milestones
+		milestones={milestones}
 		ideasListRef={ideasListRef}
 		hoveredIdeaId={hoveredIdeaId}
 		setHoveredIdeaId={setHoveredIdeaId}
 		deleteConfirm={deleteConfirm}
 		handleDeleteClick={handleDeleteClick}
 		onCreateTask={createTask}
-		onPickMilestone={handlePickMilestone} // new prop
+		onPickMilestone={handlePickMilestone}
 	  />
 	</div>
   );

@@ -1,32 +1,43 @@
 // File: /src/MilestoneModal.js
 
 import React from "react";
+import { Link } from "react-router-dom"; // Import Link from react-router
 
 function MilestoneModal({ allMilestones, onClose, onSelect }) {
   if (!allMilestones) return null;
 
-  console.log("Rendering MilestoneModal...");
-  console.log("All milestones array:", allMilestones);
+  // When user clicks the backdrop (the dark overlay), we want to close the modal.
+  // But we stopPropagation if they click inside the white box.
+  const handleBackdropClick = () => {
+	onClose();
+  };
+
+  const handleModalContentClick = (e) => {
+	e.stopPropagation(); // Prevent the onClose from firing
+  };
 
   return (
-	<div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
-	  <div className="bg-white w-80 p-4 rounded shadow-lg">
+	<div
+	  className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
+	  onClick={handleBackdropClick} // Clicking outside => close
+	>
+	  <div
+		className="bg-white w-80 p-4 rounded shadow-lg"
+		onClick={handleModalContentClick}
+	  >
 		<h2 className="text-lg font-bold mb-2">Pick a Milestone</h2>
 
 		<ul className="max-h-64 overflow-y-auto border rounded divide-y">
 		  {allMilestones.map((m) => {
-			console.log("Milestone record:", m);
 			const milestoneName = m.fields.MilestoneName || "(Untitled)";
 			const milestoneTime = m.fields.MilestoneTime || null;
 
 			// Attempt to parse the date/time if present
 			let timeLabel = "";
 			if (milestoneTime) {
-			  console.log("MilestoneTime field:", milestoneTime);
 			  try {
 				const d = new Date(milestoneTime);
 				if (!isNaN(d.getTime())) {
-				  // We'll show this time in red text
 				  timeLabel = d.toLocaleString();
 				}
 			  } catch (err) {
@@ -52,12 +63,20 @@ function MilestoneModal({ allMilestones, onClose, onSelect }) {
 		  })}
 		</ul>
 
-		<button
-		  className="mt-3 px-3 py-1 bg-gray-300 rounded hover:bg-gray-400"
-		  onClick={onClose}
-		>
-		  Cancel
-		</button>
+		<div className="mt-3 flex items-center justify-between">
+		  {/* Link to the /milestones page to create a new milestone */}
+		  <Link to="/milestones" className="text-sm text-blue-600 underline">
+			Create a Milestone
+		  </Link>
+
+		  {/* Cancel / Close button */}
+		  <button
+			className="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400"
+			onClick={onClose}
+		  >
+			Cancel
+		  </button>
+		</div>
 	  </div>
 	</div>
   );

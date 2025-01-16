@@ -11,9 +11,7 @@ import Onboarding from "./Onboarding";
 import IdeaDetail from "./IdeaDetail";
 import TodayView from "./TodayView";
 import Milestones from "./Milestones";
-
-// NEW IMPORT: now the MilestoneDetail that uses the custom ID approach
-import MilestoneDetail from "./MilestoneDetail"; // updated to use custom ID
+import MilestoneDetail from "./MilestoneDetail"; // uses custom ID approach
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -34,6 +32,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  // We only know if the user needs Onboarding if we have an Airtable user
   const userNeedsOnboarding = airtableUser && !airtableUser.fields?.Name;
 
   const handleLogin = (userRecord) => {
@@ -48,6 +47,8 @@ function App() {
   const handleLogout = () => {
     setIsLoggedIn(false);
     setAirtableUser(null);
+    const auth = getAuth();
+    auth.signOut().catch((err) => console.error("Failed to sign out:", err));
   };
 
   if (!authLoaded) {
@@ -74,7 +75,8 @@ function App() {
                 onComplete={handleOnboardingComplete}
               />
             ) : (
-              <MainContent />
+              // Pass the current Airtable user to MainContent
+              <MainContent airtableUser={airtableUser} />
             )
           }
         />
@@ -88,7 +90,7 @@ function App() {
         {/* /milestones => Milestones overview page */}
         <Route path="/milestones" element={<Milestones />} />
 
-        {/* NEW: /milestones/:milestoneCustomId => MilestoneDetail by custom ID */}
+        {/* /milestones/:milestoneCustomId => MilestoneDetail */}
         <Route
           path="/milestones/:milestoneCustomId"
           element={<MilestoneDetail />}

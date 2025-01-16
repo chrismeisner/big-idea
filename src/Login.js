@@ -1,4 +1,4 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/Login.js
+// File: /src/Login.js
 
 import React, { useState, useEffect } from "react";
 import {
@@ -37,11 +37,9 @@ function Login({ onLogin }) {
 	e.preventDefault();
 	setError(null);
 
-	// The phone input library returns something like "15550001234" (without the '+').
-	// We'll prepend the "+" ourselves.
 	const normalizedNumber = `+${mobileNumber}`;
+	console.log("[Login] handleSendOtp => normalizedNumber:", normalizedNumber);
 
-	// Since US/CA are both +1, we just check if it starts with +1:
 	if (!normalizedNumber.startsWith("+1")) {
 	  setError("Please enter a valid phone number (US/CA).");
 	  return;
@@ -49,7 +47,7 @@ function Login({ onLogin }) {
 
 	try {
 	  setSendingOtp(true);
-	  console.log("Sending OTP to:", normalizedNumber);
+	  console.log("[Login] Sending OTP to:", normalizedNumber);
 
 	  const appVerifier = window.recaptchaVerifier;
 	  const confirmation = await signInWithPhoneNumber(
@@ -59,9 +57,9 @@ function Login({ onLogin }) {
 	  );
 	  setConfirmationResult(confirmation);
 
-	  console.log("OTP sent successfully to:", normalizedNumber);
+	  console.log("[Login] OTP sent successfully to:", normalizedNumber);
 	} catch (err) {
-	  console.error("Error sending OTP:", err);
+	  console.error("[Login] Error sending OTP:", err);
 	  setError(err.message || "Failed to send OTP");
 	} finally {
 	  setSendingOtp(false);
@@ -79,20 +77,22 @@ function Login({ onLogin }) {
 
 	try {
 	  setVerifying(true);
-	  console.log("Verifying OTP...");
+	  console.log("[Login] Verifying OTP...");
 
 	  const result = await confirmationResult.confirm(otp);
-	  console.log("Phone number verified!");
+	  console.log("[Login] Phone number verified!");
 
 	  const phoneNumber = result.user.phoneNumber;
-	  console.log("Verified phone number is:", phoneNumber);
+	  console.log("[Login] Verified phone number is:", phoneNumber);
 
+	  // Look up or create an Airtable user record
 	  const userRecord = await createOrGetAirtableUser(phoneNumber);
-	  console.log("Airtable user record:", userRecord);
+	  console.log("[Login] Airtable user record:", userRecord.fields);
 
+	  // Pass the userRecord back up to App.js
 	  onLogin(userRecord);
 	} catch (err) {
-	  console.error("Error verifying OTP:", err);
+	  console.error("[Login] Error verifying OTP:", err);
 	  setError("Invalid OTP. Please try again.");
 	} finally {
 	  setVerifying(false);
@@ -100,9 +100,10 @@ function Login({ onLogin }) {
   };
 
   const createOrGetAirtableUser = async (phoneNumber) => {
-	console.log(`createOrGetAirtableUser called with phoneNumber: ${phoneNumber}`);
+	console.log("[Login] createOrGetAirtableUser => phoneNumber:", phoneNumber);
 
 	try {
+	  // Check if there's an existing user with that Mobile number
 	  const records = await airtableBase("Users")
 		.select({
 		  filterByFormula: `{Mobile} = "${phoneNumber}"`,
@@ -111,8 +112,12 @@ function Login({ onLogin }) {
 		.all();
 
 	  if (records.length > 0) {
+		// Found an existing user
+		console.log("[Login] Found existing user with phone:", phoneNumber);
 		return records[0];
 	  } else {
+		// Create a new user record in Airtable
+		console.log("[Login] Creating new user for phone:", phoneNumber);
 		const created = await airtableBase("Users").create([
 		  {
 			fields: {
@@ -120,10 +125,11 @@ function Login({ onLogin }) {
 			},
 		  },
 		]);
+		console.log("[Login] New user created =>", created[0].fields);
 		return created[0];
 	  }
 	} catch (error) {
-	  console.error("Error creating/fetching user in Airtable:", error);
+	  console.error("[Login] Error creating/fetching user in Airtable:", error);
 	  throw error;
 	}
   };
@@ -174,7 +180,6 @@ function Login({ onLogin }) {
 			placeholder="123456"
 			value={otp}
 			onChange={(e) => {
-			  // Remove any non-digit characters and limit to 6 digits
 			  const cleaned = e.target.value.replace(/\D/g, "");
 			  setOtp(cleaned.slice(0, 6));
 			}}
