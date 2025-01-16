@@ -3,26 +3,16 @@
 import React, { useEffect, useState } from "react";
 import { getAuth } from "firebase/auth";
 
-/**
- * TodayView
- * 
- * Shows only tasks from the *logged-in user* (matching {UserID}),
- * where {Today} is TRUE in Airtable.
- */
 function TodayView({ airtableUser }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // If user hasn't loaded or no fields, bail out
   const userId = airtableUser?.fields?.UserID || null;
-
-  // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   useEffect(() => {
-	// If we have no user ID, or missing environment, just stop
 	if (!userId) {
 	  setError("No user ID found. Please log in again.");
 	  setLoading(false);
@@ -46,15 +36,9 @@ function TodayView({ airtableUser }) {
 		}
 
 		// We'll filter tasks by "Today = TRUE" and "UserID = userId"
-		// Booleans in Airtable are either 0/1 or false/true. If your field
-		// is a checkbox, you can typically do {Today}=TRUE() or =1.
 		const filterFormula = `AND({Today}=TRUE(), {UserID}="${userId}")`;
-
 		const url = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		url.searchParams.set("filterByFormula", filterFormula);
-		// Optional: sort by something, e.g. "OrderToday"
-		// url.searchParams.append("sort[0][field]", "OrderToday");
-		// url.searchParams.append("sort[0][direction]", "asc");
 
 		const resp = await fetch(url.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
@@ -76,53 +60,116 @@ function TodayView({ airtableUser }) {
 	fetchData();
   }, [userId, baseId, apiKey]);
 
-  // A simple function to toggle the "Today" checkbox off (removes from today's list)
-  const handleToggleToday = async (task) => {
-	// We'll do an optimistic update
-	const wasToday = task.fields.Today === true;
-	const newValue = !wasToday;
+  // ------------------------------------------------------------------
+  // Toggle the Completed field (and CompletedTime) for a given task
+  // ------------------------------------------------------------------
+  const handleToggleCompleted = async (task) => {
+	const wasCompleted = task.fields.Completed || false;
+	const newValue = !wasCompleted;
+	const newTime = newValue ? new Date().toISOString() : null;
 
-	// Remove or set "Today" in local state
+	// Optimistic update in local state
 	setTasks((prev) =>
 	  prev.map((t) =>
-		t.id === task.id ? { ...t, fields: { ...t.fields, Today: newValue } } : t
+		t.id === task.id
+		  ? { ...t, fields: { ...t.fields, Completed: newValue, CompletedTime: newTime } }
+		  : t
 	  )
 	);
 
-	// Then patch to Airtable
+	// Patch to Airtable
 	try {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Tasks`,
-		{
-		  method: "PATCH",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				id: task.id,
-				fields: {
-				  Today: newValue,
-				},
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: task.id,
+			  fields: {
+				Completed: newValue,
+				CompletedTime: newTime,
 			  },
-			],
-		  }),
-		}
-	  );
+			},
+		  ],
+		}),
+	  });
 	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
+		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+	  }
+	} catch (err) {
+	  console.error("Error toggling Completed:", err);
+	  setError("Failed to toggle the Completed field. Please try again.");
+
+	  // Revert local state
+	  setTasks((prev) =>
+		prev.map((t) =>
+		  t.id === task.id
+			? {
+				...t,
+				fields: {
+				  ...t.fields,
+				  Completed: wasCompleted,
+				  CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
+				},
+			  }
+			: t
+		)
+	  );
+	}
+  };
+
+  // ------------------------------------------------------------------
+  // Toggle the Today field for a given task
+  // (already in your existing code)
+  // ------------------------------------------------------------------
+  const handleToggleToday = async (task) => {
+	const wasToday = task.fields.Today === true;
+	const newValue = !wasToday;
+
+	setTasks((prev) =>
+	  prev.map((t) =>
+		t.id === task.id
+		  ? { ...t, fields: { ...t.fields, Today: newValue } }
+		  : t
+	  )
+	);
+
+	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: task.id,
+			  fields: {
+				Today: newValue,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
 	  }
 	} catch (err) {
 	  console.error("Error toggling Today field:", err);
 	  setError("Failed to toggle the Today field. Please try again.");
-	  // revert local
+
+	  // Revert local
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
@@ -133,17 +180,15 @@ function TodayView({ airtableUser }) {
 	}
   };
 
-  // ----------------------------------------------------------------------------
+  // ------------------------------------------------------------------
   // Rendering
-  // ----------------------------------------------------------------------------
+  // ------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading your tasks for Today...</p>;
   }
   if (error) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
-
-  // If no tasks found
   if (tasks.length === 0) {
 	return (
 	  <div className="m-4">
@@ -157,22 +202,47 @@ function TodayView({ airtableUser }) {
 	  <h2 className="text-2xl font-bold mb-4">Your Tasks for Today</h2>
 
 	  <ul className="divide-y border rounded">
-		{tasks.map((task) => (
-		  <li key={task.id} className="p-3 hover:bg-gray-50 flex items-center">
-			<div className="flex-1">
-			  {/* Show the TaskName, or fallback */}
-			  {task.fields.TaskName || "(Untitled Task)"}
-			</div>
-			<div className="ml-2">
-			  <label className="mr-1 text-sm">Today</label>
+		{tasks.map((task) => {
+		  const isCompleted = task.fields.Completed || false;
+		  const completedTime = task.fields.CompletedTime || null;
+
+		  return (
+			<li key={task.id} className="p-3 hover:bg-gray-50 flex items-center">
+			  {/* Completed checkbox */}
 			  <input
 				type="checkbox"
-				checked={task.fields.Today || false}
-				onChange={() => handleToggleToday(task)}
+				checked={isCompleted}
+				onChange={() => handleToggleCompleted(task)}
+				className="mr-3"
 			  />
-			</div>
-		  </li>
-		))}
+
+			  {/* Task name + optional completed timestamp */}
+			  <div className="flex-1">
+				{/* Strike-through & grey if completed */}
+				<span className={isCompleted ? "line-through text-gray-500" : ""}>
+				  {task.fields.TaskName || "(Untitled Task)"}
+				</span>
+
+				{/* If completed, show date/time */}
+				{isCompleted && completedTime && (
+				  <span className="ml-2 text-sm text-gray-400">
+					(Done on {new Date(completedTime).toLocaleString()})
+				  </span>
+				)}
+			  </div>
+
+			  {/* "Today" toggle (to remove from Today or add again) */}
+			  <div className="ml-4 flex items-center space-x-1">
+				<label className="text-sm">Today</label>
+				<input
+				  type="checkbox"
+				  checked={task.fields.Today || false}
+				  onChange={() => handleToggleToday(task)}
+				/>
+			  </div>
+			</li>
+		  );
+		})}
 	  </ul>
 	</div>
   );
