@@ -412,7 +412,7 @@ function MainContent({ airtableUser }) {
   }
 
   // --------------------------------------------------------------------------
-  // 6) Create a new Task => store the custom IdeaID as well
+  // 6) Create a new Task => store the custom IdeaID as well (PLUS UserID)
   // --------------------------------------------------------------------------
   const createTask = async (ideaCustomId, taskName) => {
 	if (!baseId || !apiKey) {
@@ -440,6 +440,7 @@ function MainContent({ airtableUser }) {
 			  fields: {
 				TaskName: taskName,
 				IdeaID: ideaCustomId,
+				UserID: userId, // <-- The fix: attributing the user ID
 				Order: orderValue,
 				Completed: false,
 				CompletedTime: null,

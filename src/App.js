@@ -1,4 +1,5 @@
 // File: /src/App.js
+
 import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
@@ -109,7 +110,13 @@ function App() {
             )
           }
         />
-        <Route path="/ideas/:customIdeaId" element={<IdeaDetail />} />
+
+        {/* Updated route passing `airtableUser` down to IdeaDetail */}
+        <Route
+          path="/ideas/:customIdeaId"
+          element={<IdeaDetail airtableUser={airtableUser} />}
+        />
+
         <Route
           path="/today"
           element={isLoggedIn ? <TodayView airtableUser={airtableUser} /> : <Login />}

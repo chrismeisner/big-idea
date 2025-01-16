@@ -1,12 +1,22 @@
 // File: /src/TodayView.js
 
-import React, { useEffect, useState } from "react";
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useLayoutEffect
+} from "react";
 import { getAuth } from "firebase/auth";
+import Sortable from "sortablejs";
 
 function TodayView({ airtableUser }) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Refs for Sortable
+  const todayListRef = useRef(null);
+  const sortableRef = useRef(null);
 
   const userId = airtableUser?.fields?.UserID || null;
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
@@ -40,6 +50,10 @@ function TodayView({ airtableUser }) {
 		const url = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		url.searchParams.set("filterByFormula", filterFormula);
 
+		// Sort tasks by OrderToday ascending
+		url.searchParams.set("sort[0][field]", "OrderToday");
+		url.searchParams.set("sort[0][direction]", "asc");
+
 		const resp = await fetch(url.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
@@ -48,7 +62,6 @@ function TodayView({ airtableUser }) {
 		}
 		const data = await resp.json();
 		setTasks(data.records);
-
 	  } catch (err) {
 		console.error("[TodayView] Error fetching tasks:", err);
 		setError(err.message || "Failed to load tasks for Today.");
@@ -61,14 +74,89 @@ function TodayView({ airtableUser }) {
   }, [userId, baseId, apiKey]);
 
   // ------------------------------------------------------------------
-  // Toggle the Completed field (and CompletedTime) for a given task
+  // 1) Initialize Sortable to manage the "OrderToday" field
+  // ------------------------------------------------------------------
+  useLayoutEffect(() => {
+	if (!loading && tasks.length > 0 && todayListRef.current && !sortableRef.current) {
+	  sortableRef.current = new Sortable(todayListRef.current, {
+		animation: 150,
+		handle: ".drag-handle", // Class for the drag icon
+		onEnd: handleSortEnd,
+	  });
+	}
+
+	// Cleanup => if tasks become empty or component unmounts
+	return () => {
+	  if (sortableRef.current) {
+		sortableRef.current.destroy();
+		sortableRef.current = null;
+	  }
+	};
+  }, [loading, tasks]);
+
+  const handleSortEnd = async (evt) => {
+	const { oldIndex, newIndex } = evt;
+	if (oldIndex === newIndex) return;
+
+	// Reorder in local state
+	const updated = [...tasks];
+	const [moved] = updated.splice(oldIndex, 1);
+	updated.splice(newIndex, 0, moved);
+
+	// Reassign OrderToday (1-based) in the new order
+	updated.forEach((task, i) => {
+	  task.fields.OrderToday = i + 1;
+	});
+
+	setTasks(updated);
+
+	try {
+	  await patchOrderTodayToAirtable(updated);
+	} catch (err) {
+	  console.error("Error updating OrderToday in Airtable:", err);
+	  setError("Failed to reorder tasks for Today. Please try again.");
+	}
+  };
+
+  async function patchOrderTodayToAirtable(sortedTasks) {
+	if (!baseId || !apiKey) {
+	  throw new Error("Missing Airtable credentials.");
+	}
+
+	// Optional chunking for large arrays
+	const chunkSize = 10;
+	for (let i = 0; i < sortedTasks.length; i += chunkSize) {
+	  const chunk = sortedTasks.slice(i, i + chunkSize);
+	  const records = chunk.map((task) => ({
+		id: task.id,
+		fields: {
+		  OrderToday: task.fields.OrderToday,
+		},
+	  }));
+
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({ records }),
+	  });
+	  if (!resp.ok) {
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	}
+  }
+
+  // ------------------------------------------------------------------
+  // 2) Toggle the Completed field (and CompletedTime)
   // ------------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
 	const wasCompleted = task.fields.Completed || false;
 	const newValue = !wasCompleted;
 	const newTime = newValue ? new Date().toISOString() : null;
 
-	// Optimistic update in local state
+	// Optimistic update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -107,7 +195,7 @@ function TodayView({ airtableUser }) {
 	  console.error("Error toggling Completed:", err);
 	  setError("Failed to toggle the Completed field. Please try again.");
 
-	  // Revert local state
+	  // Revert local
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
@@ -126,8 +214,7 @@ function TodayView({ airtableUser }) {
   };
 
   // ------------------------------------------------------------------
-  // Toggle the Today field for a given task
-  // (already in your existing code)
+  // 3) Toggle the Today field
   // ------------------------------------------------------------------
   const handleToggleToday = async (task) => {
 	const wasToday = task.fields.Today === true;
@@ -201,13 +288,39 @@ function TodayView({ airtableUser }) {
 	<div className="max-w-md mx-auto px-4 py-6">
 	  <h2 className="text-2xl font-bold mb-4">Your Tasks for Today</h2>
 
-	  <ul className="divide-y border rounded">
-		{tasks.map((task) => {
+	  <ul className="divide-y border rounded" ref={todayListRef}>
+		{tasks.map((task, index) => {
 		  const isCompleted = task.fields.Completed || false;
 		  const completedTime = task.fields.CompletedTime || null;
 
+		  // If this task is the top item (index === 0), we give it a gold highlight
+		  const topItemClass = index === 0 ? "bg-amber-300" : "hover:bg-gray-50";
+
 		  return (
-			<li key={task.id} className="p-3 hover:bg-gray-50 flex items-center">
+			<li
+			  key={task.id}
+			  className={`p-3 flex items-center transition-colors ${topItemClass}`}
+			>
+			  {/* Drag handle */}
+			  <div
+				className="drag-handle mr-3 text-gray-400 cursor-grab active:cursor-grabbing"
+				title="Drag to reorder tasks for Today"
+			  >
+				<svg
+				  className="h-5 w-5"
+				  fill="none"
+				  stroke="currentColor"
+				  strokeWidth="1.5"
+				  viewBox="0 0 24 24"
+				>
+				  <path
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					d="M3.75 5h16.5M3.75 12h16.5m-16.5 7h16.5"
+				  />
+				</svg>
+			  </div>
+
 			  {/* Completed checkbox */}
 			  <input
 				type="checkbox"
@@ -218,7 +331,6 @@ function TodayView({ airtableUser }) {
 
 			  {/* Task name + optional completed timestamp */}
 			  <div className="flex-1">
-				{/* Strike-through & grey if completed */}
 				<span className={isCompleted ? "line-through text-gray-500" : ""}>
 				  {task.fields.TaskName || "(Untitled Task)"}
 				</span>

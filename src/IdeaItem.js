@@ -32,6 +32,10 @@ function IdeaItem({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitle, setEditingTitle] = useState(idea.fields.IdeaTitle);
 
+  // — NEW: Task editing logic —
+  const [editingTaskId, setEditingTaskId] = useState(null);
+  const [editingTaskName, setEditingTaskName] = useState("");
+
   // The custom ID formula field from Airtable, e.g. "o0bwzsFdnLfR75"
   const ideaCustomId = idea.fields.IdeaID;
 
@@ -95,6 +99,71 @@ function IdeaItem({
   };
 
   // --------------------------------------------------------------------------
+  // — NEW: Inline editing for Task
+  // --------------------------------------------------------------------------
+  const handleTaskClick = (task) => {
+	// Set this task as "editing"
+	setEditingTaskId(task.id);
+	setEditingTaskName(task.fields.TaskName || "");
+  };
+
+  const cancelEditingTask = () => {
+	setEditingTaskId(null);
+	setEditingTaskName("");
+  };
+
+  const handleTaskNameSave = async (taskId) => {
+	if (editingTaskName.trim() === "") {
+	  // If empty, let's just revert (or you could delete).
+	  cancelEditingTask();
+	  return;
+	}
+	try {
+	  await patchTaskName(taskId, editingTaskName);
+	  // Optimistic update in local array:
+	  const tIndex = ideaTasks.findIndex((t) => t.id === taskId);
+	  if (tIndex >= 0) {
+		ideaTasks[tIndex].fields.TaskName = editingTaskName;
+	  }
+	  setEditingTaskId(null);
+	  setEditingTaskName("");
+	} catch (err) {
+	  console.error("Failed to update task name:", err);
+	  alert("Failed to update task name. Please try again.");
+	  cancelEditingTask();
+	}
+  };
+
+  const patchTaskName = async (recordId, newName) => {
+	const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
+	const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+	if (!baseId || !apiKey) {
+	  throw new Error("Missing Airtable credentials.");
+	}
+
+	const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+	  method: "PATCH",
+	  headers: {
+		Authorization: `Bearer ${apiKey}`,
+		"Content-Type": "application/json",
+	  },
+	  body: JSON.stringify({
+		records: [
+		  {
+			id: recordId,
+			fields: {
+			  TaskName: newName,
+			},
+		  },
+		],
+	  }),
+	});
+	if (!resp.ok) {
+	  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	}
+  };
+
+  // --------------------------------------------------------------------------
   // Check for incomplete tasks
   // --------------------------------------------------------------------------
   const incompleteTasks = ideaTasks.filter((t) => !t.fields.Completed);
@@ -123,7 +192,7 @@ function IdeaItem({
 	  onMouseLeave={onHoverLeave}
 	  className="relative p-4 hover:bg-gray-50 transition flex"
 	>
-	  {/* Sortable handle */}
+	  {/* Sortable handle for reordering ideas */}
 	  <div
 		className="grab-idea-handle flex-shrink-0 mr-4 cursor-grab active:cursor-grabbing"
 		onMouseDown={handleDragStart}
@@ -192,9 +261,37 @@ function IdeaItem({
 			<ul className="list-disc list-inside">
 			  {incompleteTasks.map((task) => {
 				const milestone = getTaskMilestone(task);
+				const isEditingThisTask = editingTaskId === task.id;
+
 				return (
 				  <li key={task.id} className="mb-1">
-					{task.fields.TaskName}
+					{isEditingThisTask ? (
+					  <>
+						{/* Edit mode */}
+						<input
+						  autoFocus
+						  className="border-b border-gray-300 focus:outline-none"
+						  value={editingTaskName}
+						  onChange={(e) => setEditingTaskName(e.target.value)}
+						  onBlur={() => handleTaskNameSave(task.id)}
+						  onKeyDown={(e) => {
+							if (e.key === "Enter") handleTaskNameSave(task.id);
+							if (e.key === "Escape") cancelEditingTask();
+						  }}
+						/>
+					  </>
+					) : (
+					  <>
+						{/* Read mode */}
+						<span
+						  className="cursor-pointer"
+						  onClick={() => handleTaskClick(task)}
+						>
+						  {task.fields.TaskName}
+						</span>
+					  </>
+					)}
+					{/* If there's a milestone, display it. Otherwise, a button to add. */}
 					{milestone ? (
 					  <>
 						{" "}
@@ -244,12 +341,6 @@ function IdeaItem({
 			</button>
 		  </form>
 		</div>
-
-		{/*
-		  We no longer do a big "Milestones" section for the entire Idea,
-		  because each Task references a single milestone. So we've removed
-		  the old `ideaMilestones.map(...)`.
-		*/}
 	  </div>
 	</li>
   );

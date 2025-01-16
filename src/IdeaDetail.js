@@ -5,9 +5,9 @@ import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import { Bars3Icon } from "@heroicons/react/24/outline";
-import MilestoneModal from "./MilestoneModal"; // <-- Reuse our existing MilestoneModal
+import MilestoneModal from "./MilestoneModal"; // reuse our existing MilestoneModal
 
-function IdeaDetail() {
+function IdeaDetail({ airtableUser }) {
   const [idea, setIdea] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [milestones, setMilestones] = useState([]);
@@ -17,9 +17,23 @@ function IdeaDetail() {
   // For creating a new top-level task
   const [newTaskName, setNewTaskName] = useState("");
 
-  // Inline editing states
+  // Inline editing states for tasks
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
+
+  // —————————————————————————————————————————————————————
+  // 1) Title hover/edit logic
+  // —————————————————————————————————————————————————————
+  const [titleHovered, setTitleHovered] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  // —————————————————————————————————————————————————————
+  // 2) Summary hover/edit logic
+  // —————————————————————————————————————————————————————
+  const [summaryHovered, setSummaryHovered] = useState(false);
+  const [isEditingSummary, setIsEditingSummary] = useState(false);
+  const [editingSummary, setEditingSummary] = useState("");
 
   // For modal
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
@@ -27,9 +41,9 @@ function IdeaDetail() {
 
   // Refs for Sortable
   const topLevelRef = useRef(null);
-  const topLevelSortableRef = useRef(null);     // to keep track of the top-level Sortable instance
+  const topLevelSortableRef = useRef(null);
   const subtaskRefs = useRef({});
-  const subtaskSortableRefs = useRef({});       // to store subtask Sortable instances keyed by parentId
+  const subtaskSortableRefs = useRef({});
 
   // Param from react-router
   const { customIdeaId } = useParams();
@@ -38,8 +52,11 @@ function IdeaDetail() {
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
+  // We’ll also derive the userId from airtableUser:
+  const userId = airtableUser?.fields?.UserID || null;
+
   // --------------------------------------------------------------------------
-  // 1) Fetch Idea, Tasks, and Milestones
+  //  Fetch Idea, Tasks, and Milestones
   // --------------------------------------------------------------------------
   useEffect(() => {
 	const fetchData = async () => {
@@ -107,9 +124,11 @@ function IdeaDetail() {
 		  );
 		}
 		const milestonesData = await milestonesResp.json();
-		console.log("[IdeaDetail] Fetched milestones count:", milestonesData.records.length);
+		console.log(
+		  "[IdeaDetail] Fetched milestones count:",
+		  milestonesData.records.length
+		);
 		setMilestones(milestonesData.records);
-
 	  } catch (err) {
 		console.error("[IdeaDetail] Error fetching idea/tasks/milestones:", err);
 		setError("Failed to fetch idea details. Please try again.");
@@ -122,23 +141,24 @@ function IdeaDetail() {
   }, [baseId, apiKey, customIdeaId]);
 
   // --------------------------------------------------------------------------
-  // 2) Initialize Sortable for top-level tasks - only after data is loaded
+  //  Initialize Sortable for top-level tasks - only after data is loaded
   // --------------------------------------------------------------------------
   useLayoutEffect(() => {
-	// We only initialize if we have tasks loaded (not loading, tasks > 0, and the ref is available)
-	if (!loading && tasks.length > 0 && topLevelRef.current) {
-	  // If we haven't created the top-level Sortable yet, do so now
-	  if (!topLevelSortableRef.current) {
-		console.log("[IdeaDetail] Initializing top-level Sortable once...");
-		topLevelSortableRef.current = new Sortable(topLevelRef.current, {
-		  animation: 150,
-		  handle: ".grab-handle",
-		  onEnd: handleTopLevelSortEnd,
-		});
-	  }
+	if (
+	  !loading &&
+	  tasks.length > 0 &&
+	  topLevelRef.current &&
+	  !topLevelSortableRef.current
+	) {
+	  console.log("[IdeaDetail] Initializing top-level Sortable once...");
+	  topLevelSortableRef.current = new Sortable(topLevelRef.current, {
+		animation: 150,
+		handle: ".grab-handle",
+		onEnd: handleTopLevelSortEnd,
+	  });
 	}
 
-	// Cleanup => if tasks becomes empty or we unmount, destroy the instance
+	// Cleanup => if tasks becomes empty or we unmount
 	return () => {
 	  if (topLevelSortableRef.current) {
 		console.log("[IdeaDetail] Cleanup -> destroy top-level Sortable instance");
@@ -150,7 +170,12 @@ function IdeaDetail() {
 
   const handleTopLevelSortEnd = async (evt) => {
 	const { oldIndex, newIndex } = evt;
-	console.log("[IdeaDetail] top-level onEnd -> oldIndex:", oldIndex, "newIndex:", newIndex);
+	console.log(
+	  "[IdeaDetail] top-level onEnd -> oldIndex:",
+	  oldIndex,
+	  "newIndex:",
+	  newIndex
+	);
 
 	if (oldIndex === newIndex) {
 	  console.log("[IdeaDetail] No movement, skipping reorder");
@@ -185,12 +210,10 @@ function IdeaDetail() {
 
 	// Merge with subtasks
 	const merged = [...updated, ...subTasks];
-	console.log("[IdeaDetail] Setting tasks after top-level reorder:", merged);
 	setTasks(merged);
 
 	// Patch to Airtable
 	try {
-	  console.log("[IdeaDetail] Patching top-level reorder to Airtable...");
 	  await patchTopLevelOrder(updated);
 	} catch (err) {
 	  console.error("[IdeaDetail] Error reordering top-level tasks:", err);
@@ -206,7 +229,6 @@ function IdeaDetail() {
 	  id: p.id,
 	  fields: { Order: p.fields.Order },
 	}));
-	console.log("[IdeaDetail] patchTopLevelOrder -> updating records:", records);
 
 	const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 	  method: "PATCH",
@@ -218,20 +240,17 @@ function IdeaDetail() {
 	});
 	if (!resp.ok) {
 	  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	} else {
-	  console.log("[IdeaDetail] Successfully patched top-level order to Airtable");
 	}
   };
 
   // --------------------------------------------------------------------------
-  // 3) Initialize Sortable for subtasks - also only after data is loaded
+  //  Initialize Sortable for subtasks - also only after data is loaded
   // --------------------------------------------------------------------------
   useLayoutEffect(() => {
 	if (!loading && tasks.length > 0) {
 	  // Destroy existing subtask Sortables before rebuilding
 	  Object.entries(subtaskSortableRefs.current).forEach(([parentId, sortable]) => {
 		if (sortable) {
-		  console.log(`[IdeaDetail] Cleanup -> destroy subtask Sortable for parent: ${parentId}`);
 		  sortable.destroy();
 		}
 	  });
@@ -244,7 +263,6 @@ function IdeaDetail() {
 		const el = subtaskRefs.current[parentId];
 		if (!el) return;
 
-		console.log(`[IdeaDetail] Initializing subtask Sortable for parent: ${parentId}`);
 		subtaskSortableRefs.current[parentId] = new Sortable(el, {
 		  animation: 150,
 		  handle: ".sub-grab-handle",
@@ -253,11 +271,10 @@ function IdeaDetail() {
 	  });
 	}
 
-	// Cleanup when unmount or tasks array changes drastically
+	// Cleanup when unmount or tasks array changes
 	return () => {
 	  Object.entries(subtaskSortableRefs.current).forEach(([parentId, sortable]) => {
 		if (sortable) {
-		  console.log(`[IdeaDetail] Cleanup -> destroy subtask Sortable for parent: ${parentId}`);
 		  sortable.destroy();
 		}
 	  });
@@ -267,7 +284,14 @@ function IdeaDetail() {
 
   const handleSubtaskSortEnd = async (evt, parentTask) => {
 	const { oldIndex, newIndex } = evt;
-	console.log("[IdeaDetail] subtask onEnd -> oldIndex:", oldIndex, "newIndex:", newIndex, "parentTask:", parentTask.id);
+	console.log(
+	  "[IdeaDetail] subtask onEnd -> oldIndex:",
+	  oldIndex,
+	  "newIndex:",
+	  newIndex,
+	  "parentTask:",
+	  parentTask.id
+	);
 
 	if (oldIndex === newIndex) {
 	  console.log("[IdeaDetail] No movement in subtask reorder, skipping");
@@ -301,11 +325,9 @@ function IdeaDetail() {
 	});
 
 	const merged = [...others, ...updated];
-	console.log("[IdeaDetail] Setting tasks after subtask reorder:", merged);
 	setTasks(merged);
 
 	try {
-	  console.log("[IdeaDetail] Patching subtask reorder to Airtable...");
 	  await patchSubtaskOrder(updated);
 	} catch (err) {
 	  console.error("[IdeaDetail] Error reordering subtasks:", err);
@@ -321,7 +343,6 @@ function IdeaDetail() {
 	  id: sub.id,
 	  fields: { SubOrder: sub.fields.SubOrder },
 	}));
-	console.log("[IdeaDetail] patchSubtaskOrder -> updating records:", records);
 
 	const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 	  method: "PATCH",
@@ -333,13 +354,11 @@ function IdeaDetail() {
 	});
 	if (!resp.ok) {
 	  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	} else {
-	  console.log("[IdeaDetail] Successfully patched subtask order to Airtable");
 	}
   };
 
   // --------------------------------------------------------------------------
-  // 4) CREATE top-level or sub
+  //  CREATE top-level or sub
   // --------------------------------------------------------------------------
   const createTask = async (taskName) => {
 	if (!idea) return;
@@ -354,6 +373,13 @@ function IdeaDetail() {
 		setError("No logged-in user.");
 		return;
 	  }
+
+	  // Ensure we have a userId before proceeding
+	  if (!userId) {
+		setError("No user ID found. Please log in again.");
+		return;
+	  }
+
 	  const newOrderValue = tasks.length + 1;
 	  const customID = idea.fields.IdeaID;
 
@@ -372,6 +398,7 @@ function IdeaDetail() {
 				fields: {
 				  TaskName: taskName,
 				  IdeaID: customID,
+				  UserID: userId, // <--- ensure we set the user ID
 				  Order: newOrderValue,
 				  SubOrder: 0,
 				  Completed: false,
@@ -412,6 +439,11 @@ function IdeaDetail() {
 		setError("No logged-in user.");
 		return;
 	  }
+	  if (!userId) {
+		setError("No user ID found. Please log in again.");
+		return;
+	  }
+
 	  const customID = idea.fields.IdeaID;
 	  const newSubOrderVal = tasks.length + 1;
 	  const parentID = parentTask.fields.TaskID;
@@ -431,6 +463,7 @@ function IdeaDetail() {
 				fields: {
 				  TaskName: "New subtask...",
 				  IdeaID: customID,
+				  UserID: userId, // <--- also set user ID for subtask
 				  Order: 0,
 				  SubOrder: newSubOrderVal,
 				  Completed: false,
@@ -459,7 +492,7 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 5) Inline editing => "XXX" => DELETE parent & orphan children
+  //  Inline editing => tasks => "XXX" => DELETE, etc.
   // --------------------------------------------------------------------------
   const startEditingTask = (taskId, currentName) => {
 	setEditingTaskId(taskId);
@@ -515,8 +548,6 @@ function IdeaDetail() {
 	  });
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	  } else {
-		console.log("[IdeaDetail] Successfully updated task name in Airtable");
 	  }
 	} catch (err) {
 	  console.error("[IdeaDetail] Error updating task name:", err);
@@ -525,7 +556,7 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 6) handleDeleteTask => Remove parent, orphan children
+  //  Delete (parent + orphan children)
   // --------------------------------------------------------------------------
   const handleDeleteTask = async (taskId) => {
 	console.log("[IdeaDetail] handleDeleteTask -> taskId:", taskId);
@@ -540,7 +571,6 @@ function IdeaDetail() {
 	// locate child tasks referencing parent's TaskID => clear their ParentTask
 	const childTasks = tasks.filter((t) => t.fields.ParentTask === parentUniqueID);
 	if (childTasks.length > 0) {
-	  console.log("[IdeaDetail] Orphaning child tasks count:", childTasks.length);
 	  try {
 		const recordsToPatch = childTasks.map((ct) => ({
 		  id: ct.id,
@@ -595,8 +625,6 @@ function IdeaDetail() {
 	  });
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	  } else {
-		console.log("[IdeaDetail] Successfully deleted task from Airtable");
 	  }
 	} catch (err) {
 	  console.error("[IdeaDetail] Error deleting task from Airtable:", err);
@@ -605,14 +633,12 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 7) Toggling Completed & Today
+  //  Toggling Completed & Today
   // --------------------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
 	const wasCompleted = task.fields.Completed || false;
 	const newValue = !wasCompleted;
 	const newTime = newValue ? new Date().toISOString() : null;
-
-	console.log("[IdeaDetail] handleToggleCompleted -> task:", task.id, "newValue:", newValue);
 
 	setTasks((prev) =>
 	  prev.map((t) =>
@@ -652,11 +678,7 @@ function IdeaDetail() {
 		}),
 	  });
 	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
-	  } else {
-		console.log("[IdeaDetail] Successfully toggled Completed in Airtable");
+		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
 	  }
 	} catch (err) {
 	  console.error("[IdeaDetail] Error toggling completion:", err);
@@ -683,9 +705,6 @@ function IdeaDetail() {
 	const wasToday = task.fields.Today || false;
 	const newValue = !wasToday;
 
-	console.log("[IdeaDetail] handleToggleToday -> task:", task.id, "newValue:", newValue);
-
-	// Local optimistic update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -716,11 +735,7 @@ function IdeaDetail() {
 		}),
 	  });
 	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
-	  } else {
-		console.log("[IdeaDetail] Successfully toggled Today in Airtable");
+		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
 	  }
 	} catch (err) {
 	  console.error("[IdeaDetail] Error toggling Today:", err);
@@ -737,7 +752,7 @@ function IdeaDetail() {
   };
 
   // --------------------------------------------------------------------------
-  // 8) Organize tasks: top-level vs. sub-tasks
+  //  Organize tasks: top-level vs. sub-tasks
   // --------------------------------------------------------------------------
   const topLevelTasks = tasks.filter((t) => !t.fields.ParentTask);
 
@@ -758,7 +773,7 @@ function IdeaDetail() {
   );
 
   // --------------------------------------------------------------------------
-  // 9) Handling the single Milestone reference
+  //  Single Milestone reference
   // --------------------------------------------------------------------------
   const getMilestoneForTask = (task) => {
 	const milestoneId = task.fields.MilestoneID;
@@ -773,7 +788,12 @@ function IdeaDetail() {
 
   const assignMilestoneToTask = async (milestone) => {
 	if (!activeTaskForMilestone) return;
-	console.log("[IdeaDetail] assignMilestoneToTask -> milestone:", milestone.id, "task:", activeTaskForMilestone.id);
+	console.log(
+	  "[IdeaDetail] assignMilestoneToTask -> milestone:",
+	  milestone.id,
+	  "task:",
+	  activeTaskForMilestone.id
+	);
 	try {
 	  const updatedTasks = tasks.map((t) =>
 		t.id === activeTaskForMilestone.id
@@ -812,8 +832,6 @@ function IdeaDetail() {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
-	  } else {
-		console.log("[IdeaDetail] Successfully assigned milestone to task in Airtable");
 	  }
 	} catch (err) {
 	  console.error("[IdeaDetail] Error assigning milestone:", err);
@@ -823,6 +841,44 @@ function IdeaDetail() {
 	  setActiveTaskForMilestone(null);
 	}
   };
+
+  // --------------------------------------------------------------------------
+  //  PATCH helper for updating the Idea fields
+  // --------------------------------------------------------------------------
+  async function patchIdeaField(fieldName, fieldValue) {
+	try {
+	  if (!baseId || !apiKey) {
+		throw new Error("Missing Airtable credentials.");
+	  }
+	  if (!idea) return;
+
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: idea.id,
+			  fields: {
+				[fieldName]: fieldValue,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("[IdeaDetail] Error updating idea field:", err);
+	  setError("Failed to update idea. Please try again.");
+	}
+  }
 
   // --------------------------------------------------------------------------
   // Render
@@ -840,6 +896,64 @@ function IdeaDetail() {
 	  </p>
 	);
   }
+
+  // For convenience
+  const ideaTitle = idea.fields.IdeaTitle || "(Untitled Idea)";
+  const ideaSummary = idea.fields.IdeaSummary || "";
+
+  // --------------------------------------------------------------------------
+  //  Title & Summary Editing Handlers
+  // --------------------------------------------------------------------------
+  const startEditingTitle = () => {
+	setIsEditingTitle(true);
+	setEditingTitle(ideaTitle);
+  };
+
+  const startEditingSummary = () => {
+	setIsEditingSummary(true);
+	setEditingSummary(ideaSummary);
+  };
+
+  const handleTitleKeyDown = async (e) => {
+	if (e.key === "Enter") {
+	  await commitTitleEdit();
+	} else if (e.key === "Escape") {
+	  cancelTitleEdit();
+	}
+  };
+
+  const handleSummaryKeyDown = async (e) => {
+	if (e.key === "Enter") {
+	  e.preventDefault(); // Prevent newline
+	  await commitSummaryEdit();
+	} else if (e.key === "Escape") {
+	  cancelSummaryEdit();
+	}
+  };
+
+  const commitTitleEdit = async () => {
+	setIsEditingTitle(false);
+	// Optimistic local update
+	idea.fields.IdeaTitle = editingTitle;
+	await patchIdeaField("IdeaTitle", editingTitle);
+  };
+
+  const commitSummaryEdit = async () => {
+	setIsEditingSummary(false);
+	// Optimistic local update
+	idea.fields.IdeaSummary = editingSummary;
+	await patchIdeaField("IdeaSummary", editingSummary);
+  };
+
+  const cancelTitleEdit = () => {
+	setIsEditingTitle(false);
+	setEditingTitle(ideaTitle); // revert local
+  };
+
+  const cancelSummaryEdit = () => {
+	setIsEditingSummary(false);
+	setEditingSummary(ideaSummary); // revert local
+  };
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
@@ -859,10 +973,75 @@ function IdeaDetail() {
 		&larr; Back to your ideas
 	  </Link>
 
-	  <h2 className="text-2xl font-bold mt-4">{idea.fields.IdeaTitle}</h2>
-	  <p className="mt-2 text-gray-700">{idea.fields.IdeaSummary}</p>
+	  {/* 
+		1) IDEA TITLE with hover => pencil => inline editing
+	  */}
+	  <div
+		className="mt-4"
+		onMouseEnter={() => setTitleHovered(true)}
+		onMouseLeave={() => setTitleHovered(false)}
+	  >
+		{isEditingTitle ? (
+		  <input
+			type="text"
+			className="text-2xl font-bold border-b border-gray-300 focus:outline-none"
+			value={editingTitle}
+			onChange={(e) => setEditingTitle(e.target.value)}
+			onBlur={commitTitleEdit}
+			onKeyDown={handleTitleKeyDown}
+			autoFocus
+		  />
+		) : (
+		  <h2 className="text-2xl font-bold inline-block">
+			{ideaTitle}
+			{titleHovered && (
+			  <span
+				className="ml-2 cursor-pointer text-sm"
+				onClick={startEditingTitle}
+				title="Edit Title"
+			  >
+				✏️
+			  </span>
+			)}
+		  </h2>
+		)}
+	  </div>
 
-	  {/* Add a new Task */}
+	  {/* 
+		2) IDEA SUMMARY with hover => pencil => inline editing
+	  */}
+	  <div
+		className="mt-2 text-gray-700"
+		onMouseEnter={() => setSummaryHovered(true)}
+		onMouseLeave={() => setSummaryHovered(false)}
+	  >
+		{isEditingSummary ? (
+		  <textarea
+			className="border border-gray-300 rounded w-full p-1"
+			rows={3}
+			value={editingSummary}
+			onChange={(e) => setEditingSummary(e.target.value)}
+			onBlur={commitSummaryEdit}
+			onKeyDown={handleSummaryKeyDown}
+			autoFocus
+		  />
+		) : (
+		  <p className="inline-block">
+			{ideaSummary}
+			{summaryHovered && (
+			  <span
+				className="ml-2 cursor-pointer text-sm"
+				onClick={startEditingSummary}
+				title="Edit Summary"
+			  >
+				✏️
+			  </span>
+			)}
+		  </p>
+		)}
+	  </div>
+
+	  {/* CREATE NEW TOP-LEVEL TASK */}
 	  <form
 		className="mt-6"
 		onSubmit={(e) => {
