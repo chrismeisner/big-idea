@@ -3,9 +3,9 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
-import airtableBase from "./airtable";
+// import airtableBase from "./airtable"; // not strictly necessary if we do fetch calls
+// import { ... } from "firebase/..."; // if you need more from Firebase
 
-// Optional progress bar
 function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
   if (totalTasks === 0) {
 	return <p className="text-sm text-gray-500">No tasks yet.</p>;
@@ -27,16 +27,15 @@ function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
   );
 }
 
-function MilestoneDetail() {
-  const { milestoneCustomId } = useParams(); // e.g. /milestones/:id
+function MilestoneDetail({ airtableUser }) {
+  const { milestoneCustomId } = useParams();
   const [milestone, setMilestone] = useState(null);
-  const [tasks, setTasks] = useState([]); // *all* tasks so we can find subtasks
+  const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Inline editing states for milestone title
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingName, setEditingName] = useState("");
 
@@ -46,32 +45,36 @@ function MilestoneDetail() {
   // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+  const userId = airtableUser?.fields?.UserID || null;
 
   // ------------------------------------------------------------
-  // 1) Fetch milestone + all tasks + ideas on mount
+  // 1) Fetch milestone + tasks + ideas for current user
   // ------------------------------------------------------------
   useEffect(() => {
-	const fetchData = async () => {
+	async function fetchData() {
 	  if (!baseId || !apiKey) {
 		setError("Missing Airtable credentials.");
 		setLoading(false);
 		return;
 	  }
+	  if (!userId) {
+		setError("No logged-in user ID found. Please log in again.");
+		setLoading(false);
+		return;
+	  }
 
 	  try {
-		const auth = getAuth();
-		const currentUser = auth.currentUser;
-		if (!currentUser) {
-		  setError("No logged-in user. Please log in first.");
-		  setLoading(false);
-		  return;
-		}
-
 		setLoading(true);
+		setError(null);
 
-		// A) Milestone
-		const milestoneUrl = `https://api.airtable.com/v0/${baseId}/Milestones?filterByFormula={MilestoneID}="${milestoneCustomId}"`;
-		const milestoneResp = await fetch(milestoneUrl, {
+		// A) Milestone => AND(MilestoneID=..., UserID=...)
+		const milestoneUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		milestoneUrl.searchParams.set(
+		  "filterByFormula",
+		  `AND({MilestoneID}="${milestoneCustomId}", {UserID}="${userId}")`
+		);
+
+		const milestoneResp = await fetch(milestoneUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!milestoneResp.ok) {
@@ -87,9 +90,11 @@ function MilestoneDetail() {
 		}
 		setMilestone(milestoneData.records[0]);
 
-		// B) All tasks
-		const tasksUrl = `https://api.airtable.com/v0/${baseId}/Tasks`;
-		const tasksResp = await fetch(tasksUrl, {
+		// B) Tasks => all tasks for this user
+		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
+		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const tasksResp = await fetch(tasksUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!tasksResp.ok) {
@@ -100,9 +105,11 @@ function MilestoneDetail() {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// C) Ideas
-		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas`;
-		const ideasResp = await fetch(ideasUrl, {
+		// C) Ideas => also for this user
+		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
+		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const ideasResp = await fetch(ideasUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!ideasResp.ok) {
@@ -119,13 +126,13 @@ function MilestoneDetail() {
 	  } finally {
 		setLoading(false);
 	  }
-	};
+	}
 
 	fetchData();
-  }, [baseId, apiKey, milestoneCustomId]);
+  }, [baseId, apiKey, milestoneCustomId, userId]);
 
   // ------------------------------------------------------------
-  // 2) Countdown logic
+  // 2) Countdown logic (if there's a MilestoneTime)
   // ------------------------------------------------------------
   useEffect(() => {
 	if (!milestone?.fields?.MilestoneTime) return;
@@ -153,7 +160,7 @@ function MilestoneDetail() {
   }, [milestone?.fields?.MilestoneTime]);
 
   // ------------------------------------------------------------
-  // 3) Inline milestone title editing
+  // 3) Inline editing the milestone title
   // ------------------------------------------------------------
   const startEditingTitle = () => {
 	setIsEditingTitle(true);
@@ -166,6 +173,13 @@ function MilestoneDetail() {
   };
 
   const handleTitleSave = async () => {
+	const trimmed = editingName.trim();
+	if (!trimmed) {
+	  // revert if empty
+	  cancelEditingTitle();
+	  return;
+	}
+
 	try {
 	  // local update
 	  setMilestone((prev) => {
@@ -174,12 +188,12 @@ function MilestoneDetail() {
 		  ...prev,
 		  fields: {
 			...prev.fields,
-			MilestoneName: editingName,
+			MilestoneName: trimmed,
 		  },
 		};
 	  });
 
-	  // patch
+	  // patch to Airtable
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Milestones`, {
 		method: "PATCH",
 		headers: {
@@ -191,7 +205,7 @@ function MilestoneDetail() {
 			{
 			  id: milestone.id,
 			  fields: {
-				MilestoneName: editingName,
+				MilestoneName: trimmed,
 			  },
 			},
 		  ],
@@ -204,33 +218,32 @@ function MilestoneDetail() {
 	  }
 	} catch (err) {
 	  console.error("Error updating milestone title:", err);
+	  setError("Failed to update milestone title. Please try again.");
 	} finally {
 	  setIsEditingTitle(false);
 	}
   };
 
   // ------------------------------------------------------------
-  // 4) Toggling "Focus" (was "Today")
+  // 4) Toggling "Focus" or "Completed" for tasks
+  //    (If you want to do that from here.)
   // ------------------------------------------------------------
   const handleToggleFocus = async (task) => {
-	const wasFocus = (task.fields.Focus === "true");
-	const newValue = !wasFocus;
+	const wasFocus = task.fields.Focus === "true";
+	const newValue = wasFocus ? "" : "true";
 
-	// optimistic
+	// local
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
-		  ? { ...t, fields: { ...t.fields, Focus: newValue ? "true" : "" } }
+		  ? { ...t, fields: { ...t.fields, Focus: newValue } }
 		  : t
 	  )
 	);
 
 	// patch
 	try {
-	  if (!baseId || !apiKey) {
-		throw new Error("Missing Airtable credentials.");
-	  }
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
@@ -241,15 +254,15 @@ function MilestoneDetail() {
 			{
 			  id: task.id,
 			  fields: {
-				Focus: newValue ? "true" : "",
+				Focus: newValue,
 			  },
 			},
 		  ],
 		}),
 	  });
-	  if (!resp.ok) {
+	  if (!patchResp.ok) {
 		throw new Error(
-		  `Airtable error: ${resp.status} ${resp.statusText}`
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
 	  }
 	} catch (err) {
@@ -260,25 +273,19 @@ function MilestoneDetail() {
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
-			? {
-				...t,
-				fields: { ...t.fields, Focus: wasFocus ? "true" : "" },
-			  }
+			? { ...t, fields: { ...t.fields, Focus: wasFocus ? "true" : "" } }
 			: t
 		)
 	  );
 	}
   };
 
-  // ------------------------------------------------------------
-  // 5) Toggling "Completed"
-  // ------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
 	const wasCompleted = task.fields.Completed || false;
 	const newValue = !wasCompleted;
 	const newTime = newValue ? new Date().toISOString() : null;
 
-	// optimistic
+	// local
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -296,10 +303,7 @@ function MilestoneDetail() {
 
 	// patch
 	try {
-	  if (!baseId || !apiKey) {
-		throw new Error("Missing Airtable credentials.");
-	  }
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
@@ -317,9 +321,9 @@ function MilestoneDetail() {
 		  ],
 		}),
 	  });
-	  if (!resp.ok) {
+	  if (!patchResp.ok) {
 		throw new Error(
-		  `Airtable error: ${resp.status} ${resp.statusText}`
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
 	  }
 	} catch (err) {
@@ -345,7 +349,9 @@ function MilestoneDetail() {
   };
 
   // ------------------------------------------------------------
-  // 6) Single-level subtask lookup
+  // 5) Subtasks
+  //    If you want to see subtasks that do NOT have MilestoneID,
+  //    that's why we fetched all tasks for this user. 
   // ------------------------------------------------------------
   function getSubtasksFor(parentTask) {
 	const parentID = parentTask.fields.TaskID || null;
@@ -354,37 +360,47 @@ function MilestoneDetail() {
   }
 
   // ------------------------------------------------------------
-  // 7) Which tasks belong to this milestone + their subtasks?
+  // 6) Which tasks belong to this milestone?
   // ------------------------------------------------------------
-  // First, find tasks that directly reference this milestone
-  const primaryTasks = tasks.filter(
-	(t) => t.fields.MilestoneID === milestoneCustomId
-  );
+  // We'll filter tasks where `fields.MilestoneID === milestoneCustomId`
+  // Then gather those "primary" tasks + any subtasks for them.
+  if (milestone) {
+	// we do have the milestone record
+  }
 
-  // Then gather them + their subtasks into a single array for counting progress
+  // We'll do this after we confirm milestone is loaded
+  const milestoneTasks = milestone
+	? tasks.filter((t) => t.fields.MilestoneID === milestoneCustomId)
+	: [];
+
+  // Combine them + their subtasks into a single array for progress
   const allMilestoneTasks = [];
-  for (const pt of primaryTasks) {
+  milestoneTasks.forEach((pt) => {
 	allMilestoneTasks.push(pt);
 	const subs = getSubtasksFor(pt);
 	allMilestoneTasks.push(...subs);
-  }
+  });
 
-  // From that combined array, compute how many are completed
   const totalTasks = allMilestoneTasks.length;
   const completedTasks = allMilestoneTasks.filter((t) => t.fields.Completed)
 	.length;
   const percentage =
 	totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // For display grouping, let's group only the **primary** tasks by Idea
-  // Then, under each primary task, we'll render its subtasks
-  const tasksByIdea = primaryTasks.reduce((acc, t) => {
+  // We'll group tasks by Idea. So:
+  // { ideaId -> [ tasksForThatIdea ] }
+  const tasksByIdea = {};
+  milestoneTasks.forEach((t) => {
 	const ideaKey = t.fields.IdeaID;
-	if (!acc[ideaKey]) acc[ideaKey] = [];
-	acc[ideaKey].push(t);
-	return acc;
-  }, {});
+	if (!tasksByIdea[ideaKey]) {
+	  tasksByIdea[ideaKey] = [];
+	}
+	tasksByIdea[ideaKey].push(t);
+  });
+
+  // Turn that into an array
   const groupedData = Object.entries(tasksByIdea).map(([ideaCustomId, tasksForIdea]) => {
+	// find the Idea record
 	const ideaRecord = ideas.find((i) => i.fields.IdeaID === ideaCustomId);
 	return { ideaRecord, tasks: tasksForIdea };
   });
@@ -406,20 +422,18 @@ function MilestoneDetail() {
 	);
   }
 
-  const { MilestoneTime, MilestoneNotes } = milestone.fields;
+  const { MilestoneTime, MilestoneNotes, MilestoneName } = milestone.fields;
 
   return (
 	<div className="container py-6">
-	  {/* Link back */}
 	  <Link to="/milestones" className="text-blue-600 underline">
 		&larr; Back to Milestones
 	  </Link>
 
-	  {/* Title row */}
 	  <div className="mt-4">
 		{!isEditingTitle ? (
 		  <h2 className="text-2xl font-bold inline-flex items-center">
-			{milestone.fields.MilestoneName || "(Untitled Milestone)"}
+			{MilestoneName || "(Untitled Milestone)"}
 			<span
 			  className="ml-2 text-blue-600 cursor-pointer"
 			  onClick={startEditingTitle}
@@ -447,7 +461,6 @@ function MilestoneDetail() {
 		)}
 	  </div>
 
-	  {/* MilestoneTime + countdown */}
 	  {MilestoneTime && (
 		<>
 		  <p className="text-sm text-gray-600 mt-1">
@@ -457,12 +470,10 @@ function MilestoneDetail() {
 		</>
 	  )}
 
-	  {/* Notes */}
 	  {MilestoneNotes && (
 		<p className="mt-2 whitespace-pre-line">{MilestoneNotes}</p>
 	  )}
 
-	  {/* Progress bar */}
 	  <hr className="my-4" />
 	  <MilestoneProgressBar
 		completedTasks={completedTasks}
@@ -475,7 +486,7 @@ function MilestoneDetail() {
 		Tasks linked to this Milestone
 	  </h3>
 
-	  {primaryTasks.length === 0 ? (
+	  {milestoneTasks.length === 0 ? (
 		<p className="text-sm text-gray-500">No tasks for this milestone yet.</p>
 	  ) : (
 		<div className="space-y-4">
@@ -485,7 +496,7 @@ function MilestoneDetail() {
 
 			return (
 			  <div key={ideaCustomId} className="p-3 border rounded">
-				{/* Idea name/link */}
+				{/* Idea name */}
 				{ideaRecord ? (
 				  <Link
 					to={`/ideas/${ideaCustomId}`}
@@ -501,9 +512,9 @@ function MilestoneDetail() {
 				  {tasksForIdea.map((task) => {
 					const isCompleted = task.fields.Completed || false;
 					const completedTime = task.fields.CompletedTime || null;
-					const focusOn = (task.fields.Focus === "true");
+					const focusOn = task.fields.Focus === "true";
 
-					// Subtasks
+					// gather subtasks
 					const childTasks = getSubtasksFor(task);
 
 					return (
@@ -511,7 +522,6 @@ function MilestoneDetail() {
 						key={task.id}
 						className="p-3 bg-white border rounded hover:bg-gray-50 transition"
 					  >
-						{/* Top row: completed checkbox + name + Focus toggle */}
 						<div className="flex items-center">
 						  <input
 							type="checkbox"
@@ -543,13 +553,13 @@ function MilestoneDetail() {
 						  </p>
 						)}
 
-						{/* Subtasks (indented) */}
+						{/* Subtasks */}
 						{childTasks.length > 0 && (
 						  <ul className="mt-2 ml-6 border-l pl-3 border-gray-200 space-y-2">
 							{childTasks.map((sub) => {
 							  const subCompleted = sub.fields.Completed || false;
-							  const subCompletedTime = sub.fields.CompletedTime || null;
-							  const subFocusOn = (sub.fields.Focus === "true");
+							  const subCT = sub.fields.CompletedTime || null;
+							  const subFocusOn = sub.fields.Focus === "true";
 
 							  return (
 								<li key={sub.id}>
@@ -581,10 +591,10 @@ function MilestoneDetail() {
 									  />
 									</div>
 								  </div>
-								  {subCompleted && subCompletedTime && (
+								  {subCompleted && subCT && (
 									<p className="text-xs text-gray-500 ml-6 mt-1">
 									  Completed on{" "}
-									  {new Date(subCompletedTime).toLocaleString()}
+									  {new Date(subCT).toLocaleString()}
 									</p>
 								  )}
 								</li>

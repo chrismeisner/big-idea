@@ -3,9 +3,8 @@
 import React, { useEffect, useState } from "react";
 import { getAuth } from "firebase/auth";
 import { Link } from "react-router-dom";
-import airtableBase from "./airtable";
 
-function Milestones() {
+function Milestones({ airtableUser }) {
   const [milestones, setMilestones] = useState([]);
   const [tasks, setTasks] = useState([]);
 
@@ -16,9 +15,12 @@ function Milestones() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Env
+  // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+
+  // Pull out the userId from the Airtable user record
+  const userId = airtableUser?.fields?.UserID || null;
 
   useEffect(() => {
 	const fetchData = async () => {
@@ -27,42 +29,42 @@ function Milestones() {
 		setLoading(false);
 		return;
 	  }
+	  if (!userId) {
+		setError("No logged-in user ID found. Please log in again.");
+		setLoading(false);
+		return;
+	  }
 
 	  try {
-		const auth = getAuth();
-		const currentUser = auth.currentUser;
-		if (!currentUser) {
-		  setError("No logged-in user. Please log in first.");
-		  setLoading(false);
-		  return;
-		}
-
 		setLoading(true);
+		setError(null);
 
-		// 1) Fetch Milestones
-		const milestonesResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Milestones?sort[0][field]=Created&sort[0][direction]=desc`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
-		);
+		// 1) Fetch Milestones => filter by user
+		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		msUrl.searchParams.set("sort[0][field]", "Created");
+		msUrl.searchParams.set("sort[0][direction]", "desc");
+		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const milestonesResp = await fetch(msUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!milestonesResp.ok) {
 		  throw new Error(
-			`Airtable error: ${milestonesResp.status} ${milestonesResp.statusText}`
+			`Airtable error (Milestones): ${milestonesResp.status} ${milestonesResp.statusText}`
 		  );
 		}
 		const milestonesData = await milestonesResp.json();
 
-		// 2) Fetch Tasks
-		const tasksResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Tasks`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
-		);
+		// 2) Fetch Tasks => also filter by user
+		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
+		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const tasksResp = await fetch(tasksUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!tasksResp.ok) {
 		  throw new Error(
-			`Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
+			`Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
 		  );
 		}
 		const tasksData = await tasksResp.json();
@@ -78,8 +80,11 @@ function Milestones() {
 	};
 
 	fetchData();
-  }, [baseId, apiKey]);
+  }, [baseId, apiKey, userId]);
 
+  // --------------------------------------------------------------------------
+  // Create a new Milestone => ensures we set {UserID}=userId
+  // --------------------------------------------------------------------------
   const handleCreateMilestone = async (e) => {
 	e.preventDefault();
 	if (!newMilestoneName.trim()) return;
@@ -88,17 +93,15 @@ function Milestones() {
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
+	if (!userId) {
+	  setError("No user ID. Please log in.");
+	  return;
+	}
 
 	try {
-	  const auth = getAuth();
-	  const currentUser = auth.currentUser;
-	  if (!currentUser) {
-		setError("No logged-in user. Please log in.");
-		return;
-	  }
-
 	  const fieldsToWrite = {
 		MilestoneName: newMilestoneName,
+		UserID: userId, // <--- crucial to associate with current user
 	  };
 	  if (newMilestoneTime) {
 		fieldsToWrite.MilestoneTime = newMilestoneTime;
@@ -124,8 +127,8 @@ function Milestones() {
 	  });
 
 	  if (!resp.ok) {
-		const errorBody = await resp.json();
-		console.error("Airtable error body:", errorBody);
+		const errorBody = await resp.json().catch(() => ({}));
+		console.error("Airtable create milestone error:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
@@ -133,8 +136,10 @@ function Milestones() {
 	  const createdRecord = data.records[0];
 	  console.log("Milestone created:", createdRecord);
 
+	  // Insert into local state
 	  setMilestones((prev) => [createdRecord, ...prev]);
 
+	  // Reset form
 	  setNewMilestoneName("");
 	  setNewMilestoneTime("");
 	  setNewMilestoneNotes("");
@@ -144,6 +149,9 @@ function Milestones() {
 	}
   };
 
+  // --------------------------------------------------------------------------
+  // Render
+  // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading milestones...</p>;
   }
@@ -222,14 +230,13 @@ function Milestones() {
 		  {milestones.map((m) => {
 			const { MilestoneName, MilestoneTime, MilestoneID } = m.fields;
 
-			// Filter tasks that have fields.MilestoneID === m.fields.MilestoneID
+			// Filter tasks that have fields.MilestoneID === this milestone's custom ID
 			const tasksForThisMilestone = tasks.filter(
 			  (t) => t.fields.MilestoneID === MilestoneID
 			);
 
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
-				{/* LINK using the custom formula "MilestoneID" instead of m.id */}
 				<Link
 				  to={`/milestones/${MilestoneID}`}
 				  className="text-blue-600 underline font-semibold"

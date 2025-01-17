@@ -36,7 +36,7 @@ function IdeaDetail({ airtableUser }) {
   const topLevelListRef = useRef(null);
   const topLevelSortableRef = useRef(null);
 
-  // ** NEW: Refs for subtask lists => subtaskRefs.current[parentTaskID] = DOM <ul> **
+  // Refs for subtask lists => subtaskRefs.current[parentTaskID] = DOM <ul>
   const subtaskRefs = useRef({});
 
   // ------------------------------------------------------------------
@@ -48,15 +48,22 @@ function IdeaDetail({ airtableUser }) {
 	  setLoading(false);
 	  return;
 	}
+	if (!userId) {
+	  setError("No user ID found. Please log in again.");
+	  setLoading(false);
+	  return;
+	}
+
 	fetchData();
-  }, [baseId, apiKey, customIdeaId]);
+  }, [baseId, apiKey, customIdeaId, userId]);
 
   async function fetchData() {
 	try {
 	  setLoading(true);
 	  setError(null);
 
-	  // A) Fetch Idea
+	  // A) Fetch Idea by {IdeaID} = customIdeaId (still no user check here,
+	  //    since the idea might have a unique custom ID)
 	  const ideaResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas?filterByFormula={IdeaID}="${customIdeaId}"`,
 		{ headers: { Authorization: `Bearer ${apiKey}` } }
@@ -72,11 +79,19 @@ function IdeaDetail({ airtableUser }) {
 	  }
 	  setIdea(ideaData.records[0]);
 
-	  // B) Fetch Tasks
-	  const tasksResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${customIdeaId}"&sort[0][field]=Order&sort[0][direction]=asc`,
-		{ headers: { Authorization: `Bearer ${apiKey}` } }
+	  // B) Fetch Tasks => only tasks with {IdeaID}=customIdeaId AND {UserID}=userId
+	  const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
+	  tasksUrl.searchParams.set(
+		"filterByFormula",
+		`AND({IdeaID}="${customIdeaId}", {UserID}="${userId}")`
 	  );
+	  // Sort tasks by Order asc
+	  tasksUrl.searchParams.set("sort[0][field]", "Order");
+	  tasksUrl.searchParams.set("sort[0][direction]", "asc");
+
+	  const tasksResp = await fetch(tasksUrl.toString(), {
+		headers: { Authorization: `Bearer ${apiKey}` },
+	  });
 	  if (!tasksResp.ok) {
 		throw new Error(
 		  `Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
@@ -89,13 +104,12 @@ function IdeaDetail({ airtableUser }) {
 	  }));
 	  setTasks(mappedTasks);
 
-	  // C) Fetch all Milestones
-	  const msResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Milestones`,
-		{
-		  headers: { Authorization: `Bearer ${apiKey}` },
-		}
-	  );
+	  // C) Fetch all Milestones => optional filter by user
+	  const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+	  msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+	  const msResp = await fetch(msUrl.toString(), {
+		headers: { Authorization: `Bearer ${apiKey}` },
+	  });
 	  if (!msResp.ok) {
 		throw new Error(
 		  `Airtable error (Milestones): ${msResp.status} ${msResp.statusText}`
@@ -103,6 +117,7 @@ function IdeaDetail({ airtableUser }) {
 	  }
 	  const msData = await msResp.json();
 	  setAllMilestones(msData.records);
+
 	} catch (err) {
 	  console.error("Error fetching data:", err);
 	  setError(err.message || "Failed to load data.");
@@ -115,14 +130,15 @@ function IdeaDetail({ airtableUser }) {
   // 2) Auto-sort logic => uncompleted tasks at top, completed after
   // ------------------------------------------------------------------
   function getSortedTopLevel() {
+	// top-level => tasks with no ParentTask
 	const top = tasks.filter((t) => !t.fields.ParentTask);
 	const incomplete = top.filter((t) => !t.fields.Completed);
 	const completed = top.filter((t) => t.fields.Completed);
 
-	// Sort uncompleted by .Order ascending
+	// incomplete => sort by .Order ascending
 	incomplete.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
 
-	// Sort completed by CompletedTime desc
+	// completed => sort by CompletedTime desc
 	completed.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
 	  const tB = b.fields.CompletedTime || "";
@@ -137,8 +153,7 @@ function IdeaDetail({ airtableUser }) {
 	const inc = subs.filter((s) => !s.fields.Completed);
 	const comp = subs.filter((s) => s.fields.Completed);
 
-	// uncompleted => alphabetical or by SubOrder if you want
-	// We'll do SubOrder ascending if it exists
+	// uncompleted => sort by SubOrder ascending
 	inc.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 
 	// completed => CompletedTime desc
@@ -205,52 +220,49 @@ function IdeaDetail({ airtableUser }) {
   async function patchOrderToAirtable(incompleteArr) {
 	if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 
-	const records = incompleteArr.map((t) => ({
-	  id: t.id,
-	  fields: { Order: t.fields.Order },
-	}));
-
+	// Chunk in groups of 10
 	const chunkSize = 10;
-	for (let i = 0; i < records.length; i += chunkSize) {
-	  const chunk = records.slice(i, i + chunkSize);
+	for (let i = 0; i < incompleteArr.length; i += chunkSize) {
+	  const chunk = incompleteArr.slice(i, i + chunkSize);
+	  const records = chunk.map((t) => ({
+		id: t.id,
+		fields: { Order: t.fields.Order },
+	  }));
+
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
 		  "Content-Type": "application/json",
 		},
-		body: JSON.stringify({ records: chunk }),
+		body: JSON.stringify({ records }),
 	  });
 	  if (!resp.ok) {
-		const airtableError = await resp.json().catch(() => ({}));
-		console.error("Airtable patch error:", airtableError);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	}
   }
 
   // ------------------------------------------------------------------
-  // 3b) **NEW**: Sortable for each subtask list
+  // 3b) Sortable for each subtask list
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
 	if (!loading && tasks.length > 0) {
 	  const parentTasks = tasks.filter((t) => !t.fields.ParentTask);
 	  parentTasks.forEach((p) => {
 		const subListEl = subtaskRefs.current[p.id];
-		if (!subListEl) return; // no ref yet
+		if (!subListEl) return;
 
-		// We only reorder incomplete subtasks
+		// only reorder incomplete subtasks
 		const incompleteSubs = tasks.filter(
 		  (s) => s.fields.ParentTask === p.fields.TaskID && !s.fields.Completed
 		);
 		if (incompleteSubs.length === 0) return;
 
-		// If there's an existing sortable instance, destroy it first
 		if (subListEl._sortable) {
 		  subListEl._sortable.destroy();
 		}
 
-		// Now create a new Sortable
 		subListEl._sortable = new Sortable(subListEl, {
 		  animation: 150,
 		  handle: ".sub-drag-handle",
@@ -259,7 +271,6 @@ function IdeaDetail({ airtableUser }) {
 	  });
 	}
 
-	// Cleanup on unmount
 	return () => {
 	  Object.values(subtaskRefs.current).forEach((el) => {
 		if (el && el._sortable) {
@@ -273,7 +284,6 @@ function IdeaDetail({ airtableUser }) {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// We'll reorder only uncompleted subs
 	const incSubs = tasks.filter(
 	  (s) =>
 		s.fields.ParentTask === parentTask.fields.TaskID && !s.fields.Completed
@@ -283,15 +293,13 @@ function IdeaDetail({ airtableUser }) {
 	const [movedItem] = updatedSubs.splice(oldIndex, 1);
 	updatedSubs.splice(newIndex, 0, movedItem);
 
-	// Reassign SubOrder
 	updatedSubs.forEach((sub, idx) => {
 	  sub.fields.SubOrder = idx + 1;
 	});
 
-	// Rebuild local tasks
-	// The parentTask + other tasks remain the same
-	// We just replaced these subtasks with updated SubOrder
-	const otherTasks = tasks.filter((t) => t.fields.ParentTask !== parentTask.fields.TaskID);
+	const otherTasks = tasks.filter(
+	  (t) => t.fields.ParentTask !== parentTask.fields.TaskID
+	);
 	const newAll = [...otherTasks, ...updatedSubs];
 	setTasks(newAll);
 
@@ -306,33 +314,32 @@ function IdeaDetail({ airtableUser }) {
   async function patchSubOrderInAirtable(subArr) {
 	if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 
-	const records = subArr.map((s) => ({
-	  id: s.id,
-	  fields: { SubOrder: s.fields.SubOrder },
-	}));
-
 	const chunkSize = 10;
-	for (let i = 0; i < records.length; i += chunkSize) {
-	  const chunk = records.slice(i, i + chunkSize);
+	for (let i = 0; i < subArr.length; i += chunkSize) {
+	  const chunk = subArr.slice(i, i + chunkSize);
+	  const records = chunk.map((s) => ({
+		id: s.id,
+		fields: { SubOrder: s.fields.SubOrder },
+	  }));
+
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
 		  "Content-Type": "application/json",
 		},
-		body: JSON.stringify({ records: chunk }),
+		body: JSON.stringify({ records }),
 	  });
 	  if (!resp.ok) {
-		const airtableError = await resp.json().catch(() => ({}));
-		console.error("Airtable patch error (subtasks):", airtableError);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		throw new Error(
+		  `Airtable error (subtasks): ${resp.status} ${resp.statusText}`
+		);
 	  }
 	}
   }
 
   // ------------------------------------------------------------------
   // 4) Create new top-level Task => top of uncompleted
-  //     Now includes "UserID: userId"
   // ------------------------------------------------------------------
   async function handleCreateTopLevelTask(e) {
 	e.preventDefault();
@@ -373,7 +380,7 @@ function IdeaDetail({ airtableUser }) {
 				IdeaID: idea?.fields?.IdeaID || "",
 				ParentTask: "",
 				Order: 1,
-				UserID: userId, // crucial: store the user
+				UserID: userId, // store the user
 			  },
 			},
 		  ],
@@ -396,27 +403,9 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 5) Delete
+  // 5) Delete => we removed the separate delete button approach. 
+  //    If your "xxx" approach is in place, do it in your inline editing code. 
   // ------------------------------------------------------------------
-  async function handleDeleteTask(task) {
-	setTasks((prev) => prev.filter((t) => t.id !== task.id));
-	try {
-	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const delUrl = `https://api.airtable.com/v0/${baseId}/Tasks/${task.id}`;
-	  const resp = await fetch(delUrl, {
-		method: "DELETE",
-		headers: { Authorization: `Bearer ${apiKey}` },
-	  });
-	  if (!resp.ok) {
-		const airtableError = await resp.json().catch(() => ({}));
-		console.error("Airtable delete error:", airtableError);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	  }
-	} catch (err) {
-	  console.error("Error deleting task:", err);
-	  setError("Failed to delete task. Please refresh.");
-	}
-  }
 
   // ------------------------------------------------------------------
   // 6) Toggling Completed
@@ -470,6 +459,7 @@ function IdeaDetail({ airtableUser }) {
 	  console.error("Error toggling Completed:", err);
 	  setError("Failed to toggle Completed. Please refresh.");
 
+	  // revert
 	  setTasks((prev) =>
 		prev.map((t) => {
 		  if (t.id === task.id) {
@@ -508,8 +498,9 @@ function IdeaDetail({ airtableUser }) {
   async function commitTaskNameEdit(task) {
 	const newName = editingTaskName.trim();
 
-	if (newName.toUpperCase() === "XXX") {
-	  await handleDeleteTask(task);
+	// If the user typed "xxx", do your delete logic here if you want
+	if (newName.toLowerCase() === "xxx") {
+	  // e.g. deleteTask(task)
 	  cancelEditingTask();
 	  return;
 	}
@@ -561,14 +552,13 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 8) Toggle Focus (☀️ vs 💤)
-  //    Replace the old boolean "Today" with Focus = "today" or "".
+  // 8) Toggle Focus
   // ------------------------------------------------------------------
   async function handleToggleFocus(task) {
 	const wasFocusToday = task.fields.Focus === "today";
 	const newValue = wasFocusToday ? "" : "today";
 
-	// Optimistic local update
+	// optimistic local update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -611,7 +601,7 @@ function IdeaDetail({ airtableUser }) {
 	  console.error("Error toggling Focus:", err);
 	  setError("Failed to toggle Focus. Please refresh.");
 
-	  // Revert local
+	  // revert
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
@@ -738,8 +728,7 @@ function IdeaDetail({ airtableUser }) {
 		throw new Error("Parent task lacks a TaskID field.");
 	  }
 
-	  // We'll store SubOrder = 999 for newly created subtask (or dynamically figure out next index)
-	  // e.g. we can set SubOrder to childSubs.length + 1
+	  // We'll store SubOrder as childSubs.length + 1
 	  const childSubs = tasks.filter((t) => t.fields.ParentTask === parentTaskID);
 	  const nextSubOrder = childSubs.length + 1;
 
@@ -808,10 +797,7 @@ function IdeaDetail({ airtableUser }) {
 
   const ideaTitle = idea.fields.IdeaTitle || "(Untitled Idea)";
 
-
-
-
-return (
+  return (
 	<div className="container p-4">
 	  {/* Milestone Modal */}
 	  {showMilestoneModal && (
@@ -825,20 +811,20 @@ return (
 		  onRemove={() => removeMilestoneFromTask(activeTaskForMilestone)}
 		/>
 	  )}
-  
+
 	  {/* Back link above the Title */}
 	  <Link to="/" className="text-blue-600 underline">
 		← Back
 	  </Link>
 	  <h2 className="text-2xl font-bold mt-2">{ideaTitle}</h2>
-  
+
 	  {/* Progress bar */}
 	  <TaskProgressBar
 		completedTasks={completedTasks}
 		totalTasks={totalTasks}
 		percentage={percentage}
 	  />
-  
+
 	  {/* New top-level Task form */}
 	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex gap-2">
 		<input
@@ -855,7 +841,7 @@ return (
 		  Add
 		</button>
 	  </form>
-  
+
 	  <h3 className="mt-4 text-lg font-semibold">Tasks:</h3>
 	  {finalTopTasks.length === 0 ? (
 		<p className="text-gray-600">No tasks yet.</p>
@@ -871,12 +857,12 @@ return (
 			  MilestoneID,
 			  MilestoneName,
 			} = task.fields;
-  
+
 			const isEditing = editingTaskId === task.id;
 			const titleClasses = `font-semibold ${
 			  Completed ? "line-through text-gray-500" : ""
 			}`;
-  
+
 			let completedLabel = "";
 			if (Completed && CompletedTime) {
 			  try {
@@ -886,11 +872,9 @@ return (
 				completedLabel = "Invalid date";
 			  }
 			}
-  
-			// Instead of a boolean for "Today", we check Focus === "today"
+
 			const focusEmoji = Focus === "today" ? "☀️" : "💤";
-  
-			// If there's a milestone => display above
+
 			let milestoneRow = null;
 			if (MilestoneID) {
 			  let mileName = MilestoneName || "";
@@ -904,7 +888,10 @@ return (
 				<div className="group mb-1 inline-flex items-center">
 				  <p className="text-sm text-blue-700 font-semibold">
 					🏔{" "}
-					<Link to={`/milestones/${MilestoneID}`} className="underline">
+					<Link
+					  to={`/milestones/${MilestoneID}`}
+					  className="underline"
+					>
 					  {mileName}
 					</Link>
 				  </p>
@@ -934,16 +921,16 @@ return (
 				</p>
 			  );
 			}
-  
-			// Subtasks => reference getSortedSubtasks
+
 			const childTasks = getSortedSubtasks(TaskID);
-  
+
 			return (
-			  <li key={task.id} className="border border-gray-300 rounded p-3">
-				{/* Milestone row above main row */}
+			  <li
+				key={task.id}
+				className="border border-gray-300 rounded p-3"
+			  >
 				{milestoneRow}
-  
-				{/* Main row => top-level */}
+
 				<div className="flex items-center gap-2">
 				  {!Completed && (
 					<div
@@ -953,8 +940,7 @@ return (
 					  ⇅
 					</div>
 				  )}
-  
-				  {/* The "Focus" emoji => toggles Focus = "today" or "" */}
+
 				  <span
 					className="cursor-pointer"
 					onClick={() => handleToggleFocus(task)}
@@ -962,14 +948,13 @@ return (
 				  >
 					{focusEmoji}
 				  </span>
-  
-				  {/* Completed checkbox */}
+
 				  <input
 					type="checkbox"
 					checked={!!Completed}
 					onChange={() => handleToggleCompleted(task)}
 				  />
-  
+
 				  {isEditing ? (
 					<input
 					  type="text"
@@ -995,14 +980,13 @@ return (
 					</span>
 				  )}
 				</div>
-  
+
 				{Completed && completedLabel && (
 				  <p className="text-xs text-gray-500 ml-6 mt-1">
 					{completedLabel}
 				  </p>
 				)}
-  
-				{/* + Add Subtask link */}
+
 				<div className="ml-6 mt-1">
 				  <span
 					className="text-xs text-blue-600 underline cursor-pointer"
@@ -1011,8 +995,7 @@ return (
 					+ Add Subtask
 				  </span>
 				</div>
-  
-				{/* CHILD SUBTASKS => if any */}
+
 				{childTasks.length > 0 && (
 				  <ul
 					className="mt-2 ml-6 border-l border-gray-200 space-y-2"
@@ -1028,12 +1011,12 @@ return (
 						MilestoneID: subMileID,
 						MilestoneName: subMileName,
 					  } = sub.fields;
-  
+
 					  const isEditingSub = editingTaskId === subId;
 					  const subTitleClasses = subCompleted
 						? "line-through text-gray-500"
 						: "";
-  
+
 					  let subCompletedLabel = "";
 					  if (subCompleted && subCT) {
 						try {
@@ -1043,12 +1026,10 @@ return (
 						  subCompletedLabel = "Invalid date";
 						}
 					  }
-  
-					  // Subtask's focus toggle
+
 					  const subFocusEmoji =
 						subFocus === "today" ? "☀️" : "💤";
-  
-					  // Subtask milestone
+
 					  let subMilesRow = null;
 					  if (subMileID) {
 						let actualName = subMileName || "";
@@ -1087,16 +1068,15 @@ return (
 						  </div>
 						);
 					  }
-  
+
 					  return (
 						<li
 						  key={subId}
 						  className="pl-2 border-b last:border-b-0 pb-2"
 						>
 						  {subMilesRow}
-  
+
 						  <div className="flex items-center gap-2">
-							{/* Subtask drag handle => only for incomplete subtasks */}
 							{!subCompleted && (
 							  <div
 								className="sub-drag-handle text-gray-400 cursor-grab active:cursor-grabbing"
@@ -1105,22 +1085,20 @@ return (
 								⇅
 							  </div>
 							)}
-  
-							{/* Focus toggle on subtask */}
+
 							<span
 							  className="cursor-pointer"
 							  onClick={() => handleToggleFocus(sub)}
 							>
 							  {subFocusEmoji}
 							</span>
-  
-							{/* Completed checkbox */}
+
 							<input
 							  type="checkbox"
 							  checked={!!subCompleted}
 							  onChange={() => handleToggleCompleted(sub)}
 							/>
-  
+
 							{isEditingSub ? (
 							  <input
 								type="text"
@@ -1148,7 +1126,7 @@ return (
 							  </span>
 							)}
 						  </div>
-  
+
 						  {subCompleted && subCompletedLabel && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
 							  {subCompletedLabel}
@@ -1166,9 +1144,6 @@ return (
 	  )}
 	</div>
   );
-
 }
-
-
 
 export default IdeaDetail;

@@ -7,15 +7,6 @@ import IdeaList from "./IdeaList";
 import MilestoneModal from "./MilestoneModal";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
-// Helper to chunk an array into subarrays of size `size`
-function chunkArray(arr, size) {
-  const result = [];
-  for (let i = 0; i < arr.length; i += size) {
-	result.push(arr.slice(i, i + size));
-  }
-  return result;
-}
-
 function MainContent({ airtableUser }) {
   const [ideas, setIdeas] = useState([]);
   const [tasks, setTasks] = useState([]);
@@ -27,7 +18,7 @@ function MainContent({ airtableUser }) {
   const [newIdeaTitle, setNewIdeaTitle] = useState("");
   const [newIdeaSummary, setNewIdeaSummary] = useState("");
 
-  // Hover & delete confirmations
+  // Hover & delete confirmations (though we removed the "Delete" button in IdeaItem)
   const [hoveredIdeaId, setHoveredIdeaId] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState({});
 
@@ -43,20 +34,19 @@ function MainContent({ airtableUser }) {
   const ideasListRef = useRef(null);
   const sortableRef = useRef(null);
 
-  // ----------------------------------------------------------------------------
-  // 1) We already have `airtableUser` => get userId from userRecord.fields.UserID
-  // ----------------------------------------------------------------------------
+  // 1) Get userId from the Airtable user record
   const userId = airtableUser?.fields?.UserID || null;
 
+  // --------------------------------------------------------------------------
+  // 2) Fetch data on mount (or whenever userId changes)
+  // --------------------------------------------------------------------------
   useEffect(() => {
-	// Quick guard if no userId
 	if (!userId) {
 	  setError("No user ID found. Please log in again.");
 	  setLoading(false);
 	  return;
 	}
 
-	// Also guard for missing env credentials
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  setLoading(false);
@@ -69,15 +59,14 @@ function MainContent({ airtableUser }) {
 	  setError(null);
 
 	  try {
-		// A) Fetch Ideas belonging to this user by userId
-		console.log(`[MainContent] Searching the Ideas table with UserID => ${userId}`);
-		const ideasUrl = `https://api.airtable.com/v0/${baseId}/Ideas?sort[0][field]=Order&sort[0][direction]=asc&filterByFormula={UserID}="${userId}"`;
-		console.log("[MainContent] ideasUrl =>", ideasUrl);
+		// A) Fetch Ideas => filter by userId
+		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
+		ideasUrl.searchParams.set("sort[0][field]", "Order");
+		ideasUrl.searchParams.set("sort[0][direction]", "asc");
+		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
-		const ideasResp = await fetch(ideasUrl, {
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-		  },
+		const ideasResp = await fetch(ideasUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!ideasResp.ok) {
 		  throw new Error(
@@ -88,16 +77,13 @@ function MainContent({ airtableUser }) {
 		console.log("[MainContent] Fetched ideas =>", ideasData.records);
 		setIdeas(ideasData.records);
 
-		// B) Fetch Tasks
-		console.log("[MainContent] Fetching tasks (all)...");
-		const tasksResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Tasks`,
-		  {
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			},
-		  }
-		);
+		// B) Fetch Tasks => filter by userId
+		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
+		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const tasksResp = await fetch(tasksUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!tasksResp.ok) {
 		  throw new Error(
 			`[MainContent] Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
@@ -107,16 +93,13 @@ function MainContent({ airtableUser }) {
 		console.log("[MainContent] Fetched tasks =>", tasksData.records);
 		setTasks(tasksData.records);
 
-		// C) Fetch Milestones
-		console.log("[MainContent] Fetching milestones...");
-		const milestonesResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Milestones`,
-		  {
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			},
-		  }
-		);
+		// C) Fetch Milestones => (optional) filter by userId
+		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const milestonesResp = await fetch(msUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!milestonesResp.ok) {
 		  throw new Error(
 			`[MainContent] Airtable error (Milestones): ${milestonesResp.status} ${milestonesResp.statusText}`
@@ -125,7 +108,6 @@ function MainContent({ airtableUser }) {
 		const milestonesData = await milestonesResp.json();
 		console.log("[MainContent] Fetched milestones =>", milestonesData.records);
 		setMilestones(milestonesData.records);
-
 	  } catch (err) {
 		console.error("[MainContent] Error fetching data:", err);
 		setError("Failed to fetch data. Please try again later.");
@@ -138,7 +120,7 @@ function MainContent({ airtableUser }) {
   }, [userId, baseId, apiKey]);
 
   // --------------------------------------------------------------------------
-  // 2) Initialize Sortable after ideas are loaded
+  // 3) Initialize Sortable after ideas are loaded
   // --------------------------------------------------------------------------
   useEffect(() => {
 	if (!loading && ideas.length > 0 && ideasListRef.current && !sortableRef.current) {
@@ -164,7 +146,7 @@ function MainContent({ airtableUser }) {
   }, []);
 
   // --------------------------------------------------------------------------
-  // 3) Reorder local + patch Airtable
+  // 4) Reorder local + patch Airtable
   // --------------------------------------------------------------------------
   const handleSortEnd = async (evt) => {
 	console.log("[MainContent] handleSortEnd =>", evt);
@@ -196,48 +178,37 @@ function MainContent({ airtableUser }) {
 	}
   };
 
-  const updateIdeasOrderInAirtable = async (list) => {
+  async function updateIdeasOrderInAirtable(list) {
 	if (!baseId || !apiKey) {
 	  throw new Error("[MainContent] Missing Airtable credentials for reorder update");
 	}
 
-	const toUpdate = list.map((idea) => ({
-	  id: idea.id,
-	  fields: {
-		Order: idea.fields.Order,
-	  },
-	}));
+	// chunk them so we don't exceed 10 records at once
+	const chunkSize = 10;
+	for (let i = 0; i < list.length; i += chunkSize) {
+	  const chunk = list.slice(i, i + chunkSize).map((idea) => ({
+		id: idea.id,
+		fields: { Order: idea.fields.Order },
+	  }));
 
-	const chunks = chunkArray(toUpdate, 10);
-	for (const chunk of chunks) {
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
 		  "Content-Type": "application/json",
 		},
-		body: JSON.stringify({
-		  records: chunk,
-		  typecast: true,
-		}),
+		body: JSON.stringify({ records: chunk }),
 	  });
 	  if (!resp.ok) {
-		let errorBody;
-		try {
-		  errorBody = await resp.json();
-		} catch {
-		  errorBody = {};
-		}
-		console.error("[MainContent] Airtable error body:", errorBody);
-		throw new Error(
-		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
-		);
+		const errorBody = await resp.json().catch(() => ({}));
+		console.error("[MainContent] Airtable reorder error:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	}
-  };
+  }
 
   // --------------------------------------------------------------------------
-  // 4) Create a new Idea at Order=1, shifting all others
+  // 5) Create a new Idea at Order=1
   // --------------------------------------------------------------------------
   const handleCreateIdea = async (e) => {
 	e.preventDefault();
@@ -261,7 +232,7 @@ function MainContent({ airtableUser }) {
 		...idea,
 		fields: {
 		  ...idea.fields,
-		  Order: idea.fields.Order + 1,
+		  Order: (idea.fields.Order || 0) + 1,
 		},
 	  }));
 	  if (shifted.length > 0) {
@@ -283,8 +254,8 @@ function MainContent({ airtableUser }) {
 			  fields: {
 				IdeaTitle: newIdeaTitle,
 				IdeaSummary: newIdeaSummary,
-				UserMobile: airtableUser.fields.Mobile,
-				UserID: userId,
+				UserMobile: airtableUser.fields.Mobile, // optional
+				UserID: userId, // crucial
 				Order: 1,
 			  },
 			},
@@ -293,16 +264,9 @@ function MainContent({ airtableUser }) {
 		}),
 	  });
 	  if (!resp.ok) {
-		let errorBody;
-		try {
-		  errorBody = await resp.json();
-		} catch {
-		  errorBody = {};
-		}
-		console.error("[MainContent] Airtable returned an error body:", errorBody);
-		throw new Error(
-		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
-		);
+		const errorBody = await resp.json().catch(() => ({}));
+		console.error("[MainContent] Airtable create idea error:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
 	  const data = await resp.json();
@@ -322,97 +286,12 @@ function MainContent({ airtableUser }) {
   };
 
   // --------------------------------------------------------------------------
-  // 5) Delete an Idea (and its associated tasks)
+  // 6) "Delete" idea logic => replaced by typing 'xxx' in title (IdeaItem)
+  //    If you still have separate code for delete, remove or repurpose it.
   // --------------------------------------------------------------------------
-  const handleDeleteClick = (ideaId) => {
-	if (!deleteConfirm[ideaId]) {
-	  setDeleteConfirm((prev) => ({ ...prev, [ideaId]: true }));
-	  return;
-	}
-	deleteIdea(ideaId);
-  };
-
-  async function deleteIdea(ideaId) {
-	if (!baseId || !apiKey) {
-	  setError("[MainContent] Missing Airtable credentials for deleteIdea.");
-	  return;
-	}
-
-	try {
-	  console.log("[MainContent] Deleting idea =>", ideaId);
-
-	  // 1) Fetch tasks referencing this Idea
-	  const tasksResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Tasks?filterByFormula={IdeaID}="${ideaId}"`,
-		{
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-		  },
-		}
-	  );
-	  if (!tasksResp.ok) {
-		throw new Error(
-		  `[MainContent] Airtable error: ${tasksResp.status} ${tasksResp.statusText}`
-		);
-	  }
-	  const tasksData = await tasksResp.json();
-	  const taskRecords = tasksData.records;
-	  console.log("[MainContent] Found tasks to delete =>", taskRecords);
-
-	  // 2) Batch-delete the tasks
-	  if (taskRecords.length > 0) {
-		const taskChunks = chunkArray(taskRecords, 10);
-		for (const chunk of taskChunks) {
-		  const idsToDelete = chunk.map((rec) => rec.id);
-		  const deleteUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
-		  idsToDelete.forEach((id) =>
-			deleteUrl.searchParams.append("records[]", id)
-		  );
-
-		  const deleteResp = await fetch(deleteUrl.toString(), {
-			method: "DELETE",
-			headers: {
-			  Authorization: `Bearer ${apiKey}`,
-			},
-		  });
-		  if (!deleteResp.ok) {
-			throw new Error(
-			  `[MainContent] Airtable error (delete tasks): ${deleteResp.status} ${deleteResp.statusText}`
-			);
-		  }
-		}
-	  }
-
-	  // 3) Delete the Idea
-	  const ideaDelUrl = `https://api.airtable.com/v0/${baseId}/Ideas/${ideaId}`;
-	  const resp = await fetch(ideaDelUrl, {
-		method: "DELETE",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		},
-	  });
-	  if (!resp.ok) {
-		throw new Error(
-		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
-		);
-	  }
-
-	  // 4) Update local state
-	  setIdeas((prev) => prev.filter((idea) => idea.id !== ideaId));
-	  setDeleteConfirm((prev) => {
-		const nextConfirm = { ...prev };
-		delete nextConfirm[ideaId];
-		return nextConfirm;
-	  });
-	  console.log("[MainContent] Successfully deleted idea + associated tasks.");
-	} catch (err) {
-	  console.error("[MainContent] Error deleting idea or tasks:", err);
-	  setError("Failed to delete the idea and its tasks. Please try again.");
-	}
-  }
 
   // --------------------------------------------------------------------------
-  // 6) Create a new Task => store the custom IdeaID as well (PLUS UserID)
+  // 7) Create a new Task => store the custom IdeaID & UserID
   // --------------------------------------------------------------------------
   const createTask = async (ideaCustomId, taskName) => {
 	if (!baseId || !apiKey) {
@@ -440,7 +319,7 @@ function MainContent({ airtableUser }) {
 			  fields: {
 				TaskName: taskName,
 				IdeaID: ideaCustomId,
-				UserID: userId, // <-- The fix: attributing the user ID
+				UserID: userId, // store the user ID
 				Order: orderValue,
 				Completed: false,
 				CompletedTime: null,
@@ -451,16 +330,9 @@ function MainContent({ airtableUser }) {
 		}),
 	  });
 	  if (!resp.ok) {
-		let errorBody;
-		try {
-		  errorBody = await resp.json();
-		} catch {
-		  errorBody = {};
-		}
-		console.error("[MainContent] Airtable error body:", errorBody);
-		throw new Error(
-		  `[MainContent] Airtable error: ${resp.status} ${resp.statusText}`
-		);
+		const errorBody = await resp.json().catch(() => ({}));
+		console.error("[MainContent] Airtable create task error:", errorBody);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 
 	  const data = await resp.json();
@@ -474,7 +346,7 @@ function MainContent({ airtableUser }) {
   };
 
   // --------------------------------------------------------------------------
-  // 7) Handle picking/assigning a Milestone to a Task
+  // 8) Handle picking / assigning a Milestone to a Task
   // --------------------------------------------------------------------------
   const handlePickMilestone = (task) => {
 	console.log("[MainContent] handlePickMilestone =>", task.id);
@@ -619,7 +491,7 @@ function MainContent({ airtableUser }) {
 		hoveredIdeaId={hoveredIdeaId}
 		setHoveredIdeaId={setHoveredIdeaId}
 		deleteConfirm={deleteConfirm}
-		handleDeleteClick={handleDeleteClick}
+		handleDeleteClick={() => { /* not used now, since we do "xxx" delete */}}
 		onCreateTask={createTask}
 		onPickMilestone={handlePickMilestone}
 	  />

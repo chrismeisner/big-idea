@@ -1,5 +1,3 @@
-// File: /Users/chrismeisner/Projects/big-idea/src/TodayView.js
-
 // File: /src/TodayView.js
 
 import React, {
@@ -118,8 +116,8 @@ function TodayView({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 3) Fetch tasks, ideas, milestones
-  //     Only tasks where {Focus}="today".
+  // 3) Fetch tasks, ideas, milestones for the current user
+  //    Only tasks where {Focus}="today".
   // ------------------------------------------------------------------
   useEffect(() => {
 	if (!userId) {
@@ -144,7 +142,7 @@ function TodayView({ airtableUser }) {
 		  throw new Error("No logged-in user found in Firebase Auth.");
 		}
 
-		// A) Fetch tasks where {Focus}="today" and {UserID}=...
+		// A) Fetch tasks => {Focus}="today" AND {UserID}=...
 		const filterFormula = `AND({Focus}="today", {UserID}="${userId}")`;
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", filterFormula);
@@ -163,13 +161,13 @@ function TodayView({ airtableUser }) {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// B) Fetch all Ideas
-		const ideasResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Ideas`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
-		);
+		// B) Fetch all Ideas => only for current user
+		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
+		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const ideasResp = await fetch(ideasUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!ideasResp.ok) {
 		  throw new Error(
 			`Airtable error (Ideas): ${ideasResp.status} ${ideasResp.statusText}`
@@ -178,13 +176,13 @@ function TodayView({ airtableUser }) {
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
 
-		// C) Fetch all Milestones
-		const msResp = await fetch(
-		  `https://api.airtable.com/v0/${baseId}/Milestones`,
-		  {
-			headers: { Authorization: `Bearer ${apiKey}` },
-		  }
-		);
+		// C) Fetch all Milestones => only for current user
+		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
+		const msResp = await fetch(msUrl.toString(), {
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		});
 		if (!msResp.ok) {
 		  throw new Error(
 			`Airtable error (Milestones): ${msResp.status} ${msResp.statusText}`
@@ -192,6 +190,7 @@ function TodayView({ airtableUser }) {
 		}
 		const msData = await msResp.json();
 		setMilestones(msData.records);
+
 	  } catch (err) {
 		console.error("[TodayView] Error fetching tasks/ideas/milestones:", err);
 		setError(err.message || "Failed to load tasks for Today.");
@@ -533,10 +532,6 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   // 6) Helper functions => grouping tasks
   // ------------------------------------------------------------------
-  // We only want tasks that are actually "Focus = today".
-  // So let's keep using the tasks array as is, but let's be sure
-  // to handle incomplete vs. completed for just those tasks.
-
   function getIncompleteParentTasks() {
 	const parents = tasks.filter(
 	  (t) => !t.fields.ParentTask && !t.fields.Completed
@@ -602,8 +597,6 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   // 8) Progress calculations => only "Focus = today" tasks
   // ------------------------------------------------------------------
-  // If your tasks array already only contains tasks with {Focus}="today",
-  // then we can just count them directly:
   const totalTasks = tasks.length;
   const completedCount = tasks.filter((t) => t.fields.Completed).length;
   const percentage =
@@ -1023,8 +1016,7 @@ function TodayView({ airtableUser }) {
 									: ""
 								}
 							  >
-								{sub.fields.TaskName ||
-								  "(Untitled Subtask)"}
+								{sub.fields.TaskName || "(Untitled Subtask)"}
 							  </span>
 							</div>
 							<span
