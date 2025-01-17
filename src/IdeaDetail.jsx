@@ -25,6 +25,9 @@ function IdeaDetail({ airtableUser }) {
   // Creating a new top-level task
   const [newTaskName, setNewTaskName] = useState("");
 
+  // The userId from the Airtable user record
+  const userId = airtableUser?.fields?.UserID || null;
+
   const { customIdeaId } = useParams();
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
@@ -225,6 +228,7 @@ function IdeaDetail({ airtableUser }) {
 
   // ------------------------------------------------------------------
   // 4) Create new top-level Task => top of uncompleted
+  //     Now includes "UserID: userId"
   // ------------------------------------------------------------------
   async function handleCreateTopLevelTask(e) {
 	e.preventDefault();
@@ -251,7 +255,7 @@ function IdeaDetail({ airtableUser }) {
 		await patchOrderToAirtable(shifted);
 	  }
 
-	  // Create new at Order=1
+	  // Create new at Order=1 => include userId
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -266,6 +270,7 @@ function IdeaDetail({ airtableUser }) {
 				IdeaID: idea?.fields?.IdeaID || "",
 				ParentTask: "",
 				Order: 1,
+				UserID: userId, // crucial: store the user
 			  },
 			},
 		  ],
@@ -288,7 +293,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 5) Delete (xxx => remove)
+  // 5) Delete
   // ------------------------------------------------------------------
   async function handleDeleteTask(task) {
 	setTasks((prev) => prev.filter((t) => t.id !== task.id));
@@ -453,25 +458,27 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 8) Toggle "Today"
+  // 8) Toggle Focus (☀️ vs 💤)
+  //    Replace the old boolean "Today" with Focus = "today" or "".
   // ------------------------------------------------------------------
-  async function handleToggleToday(task) {
-	const wasToday = task.fields.Today || false;
-	const newValue = !wasToday;
+  async function handleToggleFocus(task) {
+	const wasFocusToday = task.fields.Focus === "today";
+	const newValue = wasFocusToday ? "" : "today";
 
-	const updated = tasks.map((t) => {
-	  if (t.id === task.id) {
-		return {
-		  ...t,
-		  fields: {
-			...t.fields,
-			Today: newValue,
-		  },
-		};
-	  }
-	  return t;
-	});
-	setTasks(updated);
+	// Optimistic local update
+	setTasks((prev) =>
+	  prev.map((t) =>
+		t.id === task.id
+		  ? {
+			  ...t,
+			  fields: {
+				...t.fields,
+				Focus: newValue,
+			  },
+			}
+		  : t
+	  )
+	);
 
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
@@ -486,7 +493,7 @@ function IdeaDetail({ airtableUser }) {
 			{
 			  id: task.id,
 			  fields: {
-				Today: newValue,
+				Focus: newValue,
 			  },
 			},
 		  ],
@@ -494,32 +501,32 @@ function IdeaDetail({ airtableUser }) {
 	  });
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
-		console.error("[handleToggleToday] error:", airtableError);
+		console.error("[handleToggleFocus] error:", airtableError);
 		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
 	  }
 	} catch (err) {
-	  console.error("Error toggling Today:", err);
-	  setError("Failed to toggle Today. Please refresh.");
+	  console.error("Error toggling Focus:", err);
+	  setError("Failed to toggle Focus. Please refresh.");
 
+	  // Revert local
 	  setTasks((prev) =>
-		prev.map((t) => {
-		  if (t.id === task.id) {
-			return {
-			  ...t,
-			  fields: {
-				...t.fields,
-				Today: wasToday,
-			  },
-			};
-		  }
-		  return t;
-		})
+		prev.map((t) =>
+		  t.id === task.id
+			? {
+				...t,
+				fields: {
+				  ...t.fields,
+				  Focus: wasFocusToday ? "today" : "",
+				},
+			  }
+			: t
+		)
 	  );
 	}
   }
 
   // ------------------------------------------------------------------
-  // 9) Milestone picking => also remove
+  // 9) Milestone picking
   // ------------------------------------------------------------------
   function handlePickMilestone(task) {
 	setActiveTaskForMilestone(task);
@@ -641,6 +648,7 @@ function IdeaDetail({ airtableUser }) {
 				TaskName: "New subtask...",
 				ParentTask: parentTaskID,
 				IdeaID: parentTask.fields.IdeaID,
+				UserID: userId,
 			  },
 			},
 		  ],
@@ -719,7 +727,7 @@ function IdeaDetail({ airtableUser }) {
 		percentage={percentage}
 	  />
 
-	  {/* New top-level Task form => shift existing uncompleted => create new at Order=1 */}
+	  {/* New top-level Task form */}
 	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex gap-2">
 		<input
 		  type="text"
@@ -746,7 +754,7 @@ function IdeaDetail({ airtableUser }) {
 			  TaskName,
 			  Completed,
 			  CompletedTime,
-			  Today,
+			  Focus,
 			  TaskID,
 			  MilestoneID,
 			  MilestoneName,
@@ -767,9 +775,10 @@ function IdeaDetail({ airtableUser }) {
 			  }
 			}
 
-			const todayEmoji = Today ? "☀️" : "💤";
+			// Instead of a boolean for "Today", we check Focus === "today"
+			const focusEmoji = Focus === "today" ? "☀️" : "💤";
 
-			// If there's a milestone => display + "Edit" on hover (to the right)
+			// If there's a milestone => display above
 			let milestoneRow = null;
 			if (MilestoneID) {
 			  let mileName = MilestoneName || "";
@@ -833,14 +842,16 @@ function IdeaDetail({ airtableUser }) {
 					</div>
 				  )}
 
+				  {/* The "Focus" emoji => toggles Focus = "today" or "" */}
 				  <span
 					className="cursor-pointer"
-					onClick={() => handleToggleToday(task)}
-					title="Click to toggle Today"
+					onClick={() => handleToggleFocus(task)}
+					title="Click to toggle Focus"
 				  >
-					{todayEmoji}
+					{focusEmoji}
 				  </span>
 
+				  {/* Completed checkbox */}
 				  <input
 					type="checkbox"
 					checked={!!Completed}
@@ -896,7 +907,7 @@ function IdeaDetail({ airtableUser }) {
 						TaskName: subName,
 						Completed: subCompleted,
 						CompletedTime: subCT,
-						Today: subToday,
+						Focus: subFocus,
 						MilestoneID: subMileID,
 						MilestoneName: subMileName,
 					  } = sub.fields;
@@ -916,9 +927,10 @@ function IdeaDetail({ airtableUser }) {
 						}
 					  }
 
-					  const subTodayEmoji = subToday ? "☀️" : "💤";
+					  // Subtask's focus toggle
+					  const subFocusEmoji = subFocus === "today" ? "☀️" : "💤";
 
-					  // Subtask milestone row if any
+					  // Subtask milestone
 					  let subMilesRow = null;
 					  if (subMileID) {
 						let actualName = subMileName || "";
@@ -926,8 +938,7 @@ function IdeaDetail({ airtableUser }) {
 						  const fm = allMilestones.find(
 							(m) => m.fields.MilestoneID === subMileID
 						  );
-						  actualName =
-							fm?.fields?.MilestoneName || "(Unknown)";
+						  actualName = fm?.fields?.MilestoneName || "(Unknown)";
 						}
 						subMilesRow = (
 						  <div className="group mb-1 inline-flex items-center">
@@ -963,13 +974,15 @@ function IdeaDetail({ airtableUser }) {
 						  {subMilesRow}
 
 						  <div className="flex items-center gap-2">
+							{/* Focus toggle on subtask */}
 							<span
 							  className="cursor-pointer"
-							  onClick={() => handleToggleToday(sub)}
+							  onClick={() => handleToggleFocus(sub)}
 							>
-							  {subTodayEmoji}
+							  {subFocusEmoji}
 							</span>
 
+							{/* Completed checkbox */}
 							<input
 							  type="checkbox"
 							  checked={!!subCompleted}

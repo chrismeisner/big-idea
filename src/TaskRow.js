@@ -1,4 +1,4 @@
-// File: /src/TaskRow.js 
+// File: /src/TaskRow.js
 import React from "react";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 
@@ -12,18 +12,19 @@ function TaskRow({
   onCommitEdit,
   onCancelEditing,
   onToggleCompleted,
-  onToggleToday,
+  onToggleFocus,    // updated function name
   onCreateSubtask,
 }) {
-  // Parent (top-level) task states
+  // Parent (top-level) task
   const isEditingParent = editingTaskId === task.id;
   const isCompletedParent = task.fields.Completed || false;
   const completedTimeParent = task.fields.CompletedTime || null;
 
-  // "Today" boolean from Airtable
-  const isTodayParent = task.fields.Today || false;
+  // "Focus" string from Airtable (was "Today")
+  // We'll consider it "on" if Focus === "true"
+  const isFocusParent = (task.fields.Focus === "true");
 
-  // Check if this is a top-level (parent) task => means no "ParentTask" value
+  // Check if top-level => no ParentTask
   const isTopLevel = !task.fields.ParentTask;
 
   return (
@@ -84,7 +85,7 @@ function TaskRow({
 		)}
 
 		{/*
-		  Only show "Today" checkbox if:
+		  Only show "Focus" checkbox if:
 			1) This is a top-level task,
 			2) The task is NOT completed
 		*/}
@@ -92,10 +93,10 @@ function TaskRow({
 		  <div className="ml-2 flex items-center space-x-1">
 			<input
 			  type="checkbox"
-			  checked={isTodayParent}
-			  onChange={() => onToggleToday(task)}
+			  checked={isFocusParent}
+			  onChange={() => onToggleFocus(task)}
 			/>
-			<label className="text-sm">Today</label>
+			<label className="text-sm">Focus</label>
 		  </div>
 		)}
 
@@ -174,7 +175,7 @@ function TaskRow({
 				  </span>
 				)}
 
-				{/* We do NOT show the "Today" checkbox or "Add Subtask" for subtasks */}
+				{/* We do NOT show the "Focus" checkbox or "Add Subtask" for subtasks */}
 			  </li>
 			);
 		  })}
