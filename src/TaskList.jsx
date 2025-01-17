@@ -8,8 +8,9 @@ import { Bars3Icon } from "@heroicons/react/24/outline";
  *
  * - Renders top-level tasks (parents), each with a subtask list.
  * - Displays milestone ONLY for top-level tasks (no milestone block for subtasks).
- * - Milestone block is above the task title, labeled “🏔️ Add Milestone” if none is set.
- * - "+ Subtask" is now a text link in the same style (blue + underline).
+ * - Milestone block is above the task title, labeled “🏔️ Milestone” if none is set,
+ *   or “🏔️ <MilestoneName>” if one is set.
+ * - "+ Subtask" is a text link in the same style (blue + underline).
  *
  * Props:
  *  - topLevelTasks: array of parent tasks (no ParentTask).
@@ -59,7 +60,7 @@ function TaskList({
 			<div className="ml-6 mb-2 pl-3 border-l border-gray-200">
 			  {parentMilestone ? (
 				<p className="text-sm">
-				  <strong>{parentMilestone.fields.MilestoneName}</strong>
+				  🏔️ <strong>{parentMilestone.fields.MilestoneName}</strong>
 				</p>
 			  ) : (
 				<p
@@ -187,7 +188,9 @@ function TaskList({
 						  ) : (
 							<span
 							  className={`cursor-pointer ${
-								subCompleted ? "line-through text-gray-500" : ""
+								subCompleted
+								  ? "line-through text-gray-500"
+								  : ""
 							  }`}
 							  onClick={() =>
 								onStartEditing(sub.id, sub.fields.TaskName)
@@ -217,11 +220,6 @@ function TaskList({
 						  </div>
 						)}
 					  </div>
-
-					  {/*
-						We intentionally do NOT render milestone info for subtasks.
-						It's removed entirely (as requested).
-					  */}
 					</li>
 				  );
 				})}
