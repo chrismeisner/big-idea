@@ -1,4 +1,4 @@
-// File: /src/App.js
+// File: /Users/chrismeisner/Projects/big-idea/src/App.js
 
 import React, { useEffect, useState } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
@@ -46,7 +46,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // The same function you used to have in Login.js:
+  // Same function you used to have in Login.js:
   async function createOrGetAirtableUser(phoneNumber) {
     // Query your "Users" table for a record where {Mobile} = phoneNumber
     const records = await airtableBase("Users")
@@ -84,7 +84,9 @@ function App() {
   const handleLogout = () => {
     setIsLoggedIn(false);
     setAirtableUser(null);
-    getAuth().signOut().catch((err) => console.error("Failed to sign out:", err));
+    getAuth()
+      .signOut()
+      .catch((err) => console.error("Failed to sign out:", err));
   };
 
   return (
@@ -111,18 +113,29 @@ function App() {
           }
         />
 
-        {/* Updated route passing `airtableUser` down to IdeaDetail */}
+        {/* Updated route passing `airtableUser` to IdeaDetail */}
         <Route
           path="/ideas/:customIdeaId"
           element={<IdeaDetail airtableUser={airtableUser} />}
         />
 
+        {/* TodayView also needs airtableUser */}
         <Route
           path="/today"
           element={isLoggedIn ? <TodayView airtableUser={airtableUser} /> : <Login />}
         />
-        <Route path="/milestones" element={<Milestones />} />
-        <Route path="/milestones/:milestoneCustomId" element={<MilestoneDetail />} />
+
+        {/* (1) Pass airtableUser to Milestones */}
+        <Route
+          path="/milestones"
+          element={<Milestones airtableUser={airtableUser} />}
+        />
+
+        {/* (2) Pass airtableUser to MilestoneDetail */}
+        <Route
+          path="/milestones/:milestoneCustomId"
+          element={<MilestoneDetail airtableUser={airtableUser} />}
+        />
       </Routes>
     </Router>
   );

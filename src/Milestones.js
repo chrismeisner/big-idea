@@ -19,7 +19,7 @@ function Milestones({ airtableUser }) {
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // Pull out the userId from the Airtable user record
+  // Get the current user's ID from Airtable record
   const userId = airtableUser?.fields?.UserID || null;
 
   useEffect(() => {
@@ -39,10 +39,11 @@ function Milestones({ airtableUser }) {
 		setLoading(true);
 		setError(null);
 
-		// 1) Fetch Milestones => filter by user
+		// 1) Fetch Milestones => only for this user, sorted by MilestoneTime ascending
 		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
-		msUrl.searchParams.set("sort[0][field]", "Created");
-		msUrl.searchParams.set("sort[0][direction]", "desc");
+		// Sort by MilestoneTime ascending => earliest at top
+		msUrl.searchParams.set("sort[0][field]", "MilestoneTime");
+		msUrl.searchParams.set("sort[0][direction]", "asc");
 		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
 		const milestonesResp = await fetch(msUrl.toString(), {
@@ -55,7 +56,7 @@ function Milestones({ airtableUser }) {
 		}
 		const milestonesData = await milestonesResp.json();
 
-		// 2) Fetch Tasks => also filter by user
+		// 2) Fetch Tasks => also for this user
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
@@ -83,7 +84,7 @@ function Milestones({ airtableUser }) {
   }, [baseId, apiKey, userId]);
 
   // --------------------------------------------------------------------------
-  // Create a new Milestone => ensures we set {UserID}=userId
+  // Create a new Milestone => sets {UserID} to associate with current user
   // --------------------------------------------------------------------------
   const handleCreateMilestone = async (e) => {
 	e.preventDefault();
@@ -101,7 +102,7 @@ function Milestones({ airtableUser }) {
 	try {
 	  const fieldsToWrite = {
 		MilestoneName: newMilestoneName,
-		UserID: userId, // <--- crucial to associate with current user
+		UserID: userId, // Important: store the current user's ID
 	  };
 	  if (newMilestoneTime) {
 		fieldsToWrite.MilestoneTime = newMilestoneTime;
@@ -136,10 +137,10 @@ function Milestones({ airtableUser }) {
 	  const createdRecord = data.records[0];
 	  console.log("Milestone created:", createdRecord);
 
-	  // Insert into local state
+	  // Insert into local state so the new milestone appears immediately
 	  setMilestones((prev) => [createdRecord, ...prev]);
 
-	  // Reset form
+	  // Reset the form
 	  setNewMilestoneName("");
 	  setNewMilestoneTime("");
 	  setNewMilestoneNotes("");
@@ -237,12 +238,14 @@ function Milestones({ airtableUser }) {
 
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
+				{/* Link to the milestone detail page */}
 				<Link
 				  to={`/milestones/${MilestoneID}`}
 				  className="text-blue-600 underline font-semibold"
 				>
 				  {MilestoneName || "(Untitled)"}
 				</Link>
+
 				{MilestoneTime && (
 				  <span className="ml-2 text-xs text-gray-500">
 					(Due: {new Date(MilestoneTime).toLocaleString()})
@@ -285,3 +288,4 @@ function Milestones({ airtableUser }) {
 }
 
 export default Milestones;
+
