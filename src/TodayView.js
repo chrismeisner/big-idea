@@ -1,3 +1,5 @@
+// File: /Users/chrismeisner/Projects/big-idea/src/TodayView.js
+
 // File: /src/TodayView.js
 
 import React, {
@@ -19,7 +21,7 @@ function TodayView({ airtableUser }) {
   useEffect(() => {
 	function getTargetTime() {
 	  // Build a Date object for "today at 16:20" local time
-	  // If it's already past 4:20pm, we use "tomorrow at 16:20"
+	  // If it's already past 4:20pm, schedule tomorrow at 16:20
 	  const now = new Date();
 	  const target = new Date(
 		now.getFullYear(),
@@ -31,7 +33,6 @@ function TodayView({ airtableUser }) {
 		0
 	  );
 	  if (target < now) {
-		// If it's already past 4:20pm, schedule for tomorrow
 		target.setDate(target.getDate() + 1);
 	  }
 	  return target;
@@ -55,8 +56,7 @@ function TodayView({ airtableUser }) {
 	  const mins = Math.floor((totalSeconds % 3600) / 60);
 	  const secs = totalSeconds % 60;
 
-	  // Build a readable string
-	  // e.g. "12h 34m 56s" or "1d 2h 0m 10s"
+	  // Build a readable string, e.g. "12h 34m 56s"
 	  let result = "";
 	  if (days > 0) result += `${days}d `;
 	  if (days > 0 || hours > 0) result += `${hours}h `;
@@ -65,7 +65,7 @@ function TodayView({ airtableUser }) {
 	  setDailyCountdown(result + " until 4:20pm");
 	}
 
-	updateCountdown(); // run immediately
+	updateCountdown(); // run immediately once
 	const timerId = setInterval(updateCountdown, 1000);
 	return () => clearInterval(timerId);
   }, []);
@@ -80,12 +80,11 @@ function TodayView({ airtableUser }) {
   const [error, setError] = useState(null);
 
   // ------------------------------------------------------------------
-  // 2) Refs for Sortable: top-level incomplete tasks
-  //    Also subtaskRefs => an object of refs for each parent's subtasks
+  // 2) Refs for Sortable
   // ------------------------------------------------------------------
   const incompleteListRef = useRef(null);
   const sortableRef = useRef(null);
-  const subtaskRefs = useRef({}); // subtaskRefs.current[parentTaskID] = DOM element
+  const subtaskRefs = useRef({}); // subtaskRefs.current[parentTaskID] = DOM
 
   // ------------------------------------------------------------------
   // Airtable ENV
@@ -145,11 +144,11 @@ function TodayView({ airtableUser }) {
 		  throw new Error("No logged-in user found in Firebase Auth.");
 		}
 
-		// A) Fetch tasks where {Focus}="today"
+		// A) Fetch tasks where {Focus}="today" and {UserID}=...
 		const filterFormula = `AND({Focus}="today", {UserID}="${userId}")`;
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", filterFormula);
-		// Sort tasks by OrderToday ascending
+		// Sort tasks by OrderToday asc
 		tasksUrl.searchParams.set("sort[0][field]", "OrderToday");
 		tasksUrl.searchParams.set("sort[0][direction]", "asc");
 
@@ -209,7 +208,7 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
 	if (!loading && incompleteListRef.current && !sortableRef.current) {
-	  const inc = getIncompleteParentTasks(); // only top-level
+	  const inc = getIncompleteParentTasks(); // only top-level incomplete
 	  if (inc.length > 0) {
 		sortableRef.current = new Sortable(incompleteListRef.current, {
 		  animation: 150,
@@ -241,9 +240,7 @@ function TodayView({ airtableUser }) {
 	  task.fields.OrderToday = i + 1;
 	});
 
-	// Now we re-build the entire tasks array
-	// completed tasks remain the same
-	// subtasks remain as-is
+	// Rebuild the entire tasks array
 	const completed = tasks.filter((t) => t.fields.Completed);
 	const subtasksOnly = tasks.filter((t) => t.fields.ParentTask);
 
@@ -288,7 +285,6 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   // 4b) Subtask Sortable => one instance per parent
   // ------------------------------------------------------------------
-  // We'll re-init each time tasks change.
   useLayoutEffect(() => {
 	if (!loading && tasks.length > 0) {
 	  // For each parent, if there's a subtask list, create a Sortable
@@ -298,7 +294,6 @@ function TodayView({ airtableUser }) {
 		const incompleteSubs = getIncompleteSubtasks(p);
 		if (incompleteSubs.length === 0) return;
 
-		// subtaskRefs.current[p.id] => the <ul> node in the DOM
 		const listEl = subtaskRefs.current[p.id];
 		if (!listEl) return; // hasn't rendered yet
 
@@ -312,13 +307,11 @@ function TodayView({ airtableUser }) {
 		  handle: ".sub-drag-handle",
 		  onEnd: (evt) => handleSubtaskSortEnd(evt, p),
 		});
-		// Store a reference so we can destroy on cleanup
 		listEl._sortable = subSortable;
 	  });
 	}
 
 	return () => {
-	  // Cleanup: destroy any existing Sortable instances
 	  Object.values(subtaskRefs.current).forEach((ul) => {
 		if (ul && ul._sortable) {
 		  ul._sortable.destroy();
@@ -342,12 +335,13 @@ function TodayView({ airtableUser }) {
 	});
 
 	// Rebuild local tasks
-	// We only changed these subtasks
-	const allOthers = tasks.filter((t) => t.fields.ParentTask !== parent.fields.TaskID);
+	const allOthers = tasks.filter(
+	  (t) => t.fields.ParentTask !== parent.fields.TaskID
+	);
 	updatedSubs.forEach((u) => {
 	  const idx = allOthers.findIndex((x) => x.id === u.id);
 	  if (idx >= 0) {
-		allOthers[idx] = u; // update if needed
+		allOthers[idx] = u;
 	  }
 	});
 	setTasks([...allOthers, ...updatedSubs]);
@@ -416,24 +410,27 @@ function TodayView({ airtableUser }) {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Completed: newValue,
-				CompletedTime: newTime,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Completed: newValue,
+				  CompletedTime: newTime,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -452,7 +449,9 @@ function TodayView({ airtableUser }) {
 				fields: {
 				  ...t.fields,
 				  Completed: wasCompleted,
-				  CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
+				  CompletedTime: wasCompleted
+					? t.fields.CompletedTime
+					: null,
 				},
 			  }
 			: t
@@ -461,11 +460,7 @@ function TodayView({ airtableUser }) {
 	}
   };
 
-  /**
-   * handleToggleFocus
-   * - If `task.fields.Focus === "today"`, switch to `""` (off).
-   * - Else switch to `"today"` (on).
-   */
+  // Toggle Focus => "today" <--> ""
   const handleToggleFocus = async (task) => {
 	const wasFocusToday = task.fields.Focus === "today";
 	const newValue = wasFocusToday ? "" : "today";
@@ -489,23 +484,26 @@ function TodayView({ airtableUser }) {
 	  if (!baseId || !apiKey) {
 		throw new Error("Missing Airtable credentials.");
 	  }
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Focus: newValue,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Focus: newValue,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -535,17 +533,22 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   // 6) Helper functions => grouping tasks
   // ------------------------------------------------------------------
+  // We only want tasks that are actually "Focus = today".
+  // So let's keep using the tasks array as is, but let's be sure
+  // to handle incomplete vs. completed for just those tasks.
+
   function getIncompleteParentTasks() {
-	// Parent tasks => no ParentTask
-	const parents = tasks.filter((t) => !t.fields.ParentTask && !t.fields.Completed);
-	// sort by OrderToday
+	const parents = tasks.filter(
+	  (t) => !t.fields.ParentTask && !t.fields.Completed
+	);
 	parents.sort((a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
 	return parents;
   }
 
   function getCompletedParentTasks() {
-	// Completed parents => no ParentTask
-	const parents = tasks.filter((t) => !t.fields.ParentTask && t.fields.Completed);
+	const parents = tasks.filter(
+	  (t) => !t.fields.ParentTask && t.fields.Completed
+	);
 	// sort by CompletedTime desc
 	parents.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
@@ -561,7 +564,6 @@ function TodayView({ airtableUser }) {
 	const subs = tasks.filter(
 	  (s) => s.fields.ParentTask === parentID && !s.fields.Completed
 	);
-	// sort by SubOrder ascending
 	subs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 	return subs;
   }
@@ -572,7 +574,6 @@ function TodayView({ airtableUser }) {
 	const subs = tasks.filter(
 	  (s) => s.fields.ParentTask === parentID && s.fields.Completed
 	);
-	// sort by CompletedTime desc
 	subs.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
 	  const tB = b.fields.CompletedTime || "";
@@ -593,12 +594,16 @@ function TodayView({ airtableUser }) {
   const findMilestoneForTask = (task) => {
 	const milestoneId = task.fields.MilestoneID;
 	if (!milestoneId) return null;
-	return milestones.find((m) => m.fields.MilestoneID === milestoneId) || null;
+	return (
+	  milestones.find((m) => m.fields.MilestoneID === milestoneId) || null
+	);
   };
 
   // ------------------------------------------------------------------
-  // 8) Progress calculations
+  // 8) Progress calculations => only "Focus = today" tasks
   // ------------------------------------------------------------------
+  // If your tasks array already only contains tasks with {Focus}="today",
+  // then we can just count them directly:
   const totalTasks = tasks.length;
   const completedCount = tasks.filter((t) => t.fields.Completed).length;
   const percentage =
@@ -628,7 +633,7 @@ function TodayView({ airtableUser }) {
   }
 
   return (
-	<div className="max-w-md mx-auto px-4 py-6">
+	<div className="container py-6">
 	  {/* Daily Countdown */}
 	  <div className="mb-2 text-sm text-red-600 font-semibold">
 		{dailyCountdown}
@@ -636,7 +641,7 @@ function TodayView({ airtableUser }) {
 
 	  <h2 className="text-2xl font-bold mb-4">Today's Tasks</h2>
 
-	  {/* Progress Bar */}
+	  {/* Progress Bar => only counting tasks with Focus="today" */}
 	  <TodayProgressBar
 		completedTasks={completedCount}
 		totalTasks={totalTasks}
@@ -647,7 +652,7 @@ function TodayView({ airtableUser }) {
 	  {incompleteParents.length > 0 && (
 		<ul className="divide-y border rounded mb-6" ref={incompleteListRef}>
 		  {incompleteParents.map((parent, index) => {
-			const isCompleted = parent.fields.Completed || false; // should be false
+			const isCompleted = parent.fields.Completed || false;
 			const completedTime = parent.fields.CompletedTime || null;
 			const isFocusToday = parent.fields.Focus === "today";
 
@@ -720,7 +725,9 @@ function TodayView({ airtableUser }) {
 				  {/* Task name */}
 				  <div className="flex-1">
 					<span
-					  className={isCompleted ? "line-through text-gray-500" : ""}
+					  className={
+						isCompleted ? "line-through text-gray-500" : ""
+					  }
 					>
 					  {parent.fields.TaskName || "(Untitled Task)"}
 					</span>
@@ -767,11 +774,13 @@ function TodayView({ airtableUser }) {
 					  const isFocusSub = sub.fields.Focus === "today";
 
 					  const subIdea = findIdeaForTask(sub);
-					  const subIdeaTitle = subIdea?.fields?.IdeaTitle || "(Untitled Idea)";
+					  const subIdeaTitle =
+						subIdea?.fields?.IdeaTitle || "(Untitled Idea)";
 					  const subIdeaCustomId = subIdea?.fields?.IdeaID;
 
 					  const subMile = findMilestoneForTask(sub);
-					  const subMileName = subMile?.fields?.MilestoneName || "";
+					  const subMileName =
+						subMile?.fields?.MilestoneName || "";
 					  const subMileID = subMile?.fields?.MilestoneID;
 
 					  return (
@@ -798,7 +807,9 @@ function TodayView({ airtableUser }) {
 							<div className="flex-1">
 							  <span
 								className={
-								  subCompleted ? "line-through text-gray-500" : ""
+								  subCompleted
+									? "line-through text-gray-500"
+									: ""
 								}
 							  >
 								{sub.fields.TaskName || "(Untitled Subtask)"}
@@ -817,7 +828,8 @@ function TodayView({ airtableUser }) {
 
 						  {subCompleted && subTime && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
+							  Completed on{" "}
+							  {new Date(subTime).toLocaleString()}
 							</p>
 						  )}
 
@@ -872,7 +884,8 @@ function TodayView({ airtableUser }) {
 							/>
 							<div className="flex-1">
 							  <span className="line-through text-gray-500">
-								{sub.fields.TaskName || "(Untitled Subtask)"}
+								{sub.fields.TaskName ||
+								  "(Untitled Subtask)"}
 							  </span>
 							</div>
 							<span
@@ -885,7 +898,8 @@ function TodayView({ airtableUser }) {
 						  </div>
 						  {subTime && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
+							  Completed on{" "}
+							  {new Date(subTime).toLocaleString()}
 							</p>
 						  )}
 						</li>
@@ -918,7 +932,10 @@ function TodayView({ airtableUser }) {
 			const compSubs = getCompletedSubtasks(parent);
 
 			return (
-			  <li key={parent.id} className="p-3 flex flex-col hover:bg-gray-50">
+			  <li
+				key={parent.id}
+				className="p-3 flex flex-col hover:bg-gray-50"
+			  >
 				{/* If there's a milestone, show above */}
 				{milestone && (
 				  <div className="mb-1 inline-flex items-center ml-6">
@@ -1001,10 +1018,13 @@ function TodayView({ airtableUser }) {
 							<div className="flex-1">
 							  <span
 								className={
-								  subCompleted ? "line-through text-gray-500" : ""
+								  subCompleted
+									? "line-through text-gray-500"
+									: ""
 								}
 							  >
-								{sub.fields.TaskName || "(Untitled Subtask)"}
+								{sub.fields.TaskName ||
+								  "(Untitled Subtask)"}
 							  </span>
 							</div>
 							<span
@@ -1017,7 +1037,8 @@ function TodayView({ airtableUser }) {
 						  </div>
 						  {subCompleted && subTime && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
+							  Completed on{" "}
+							  {new Date(subTime).toLocaleString()}
 							</p>
 						  )}
 						</li>
@@ -1044,7 +1065,8 @@ function TodayView({ airtableUser }) {
 							/>
 							<div className="flex-1">
 							  <span className="line-through text-gray-500">
-								{sub.fields.TaskName || "(Untitled Subtask)"}
+								{sub.fields.TaskName ||
+								  "(Untitled Subtask)"}
 							  </span>
 							</div>
 							<span
@@ -1057,7 +1079,8 @@ function TodayView({ airtableUser }) {
 						  </div>
 						  {subTime && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
+							  Completed on{" "}
+							  {new Date(subTime).toLocaleString()}
 							</p>
 						  )}
 						</li>

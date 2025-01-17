@@ -808,8 +808,11 @@ function IdeaDetail({ airtableUser }) {
 
   const ideaTitle = idea.fields.IdeaTitle || "(Untitled Idea)";
 
-  return (
-	<div className="max-w-md mx-auto p-4">
+
+
+
+return (
+	<div className="container p-4">
 	  {/* Milestone Modal */}
 	  {showMilestoneModal && (
 		<MilestoneModal
@@ -822,20 +825,20 @@ function IdeaDetail({ airtableUser }) {
 		  onRemove={() => removeMilestoneFromTask(activeTaskForMilestone)}
 		/>
 	  )}
-
-	  {/* Title + Link back */}
-	  <h2 className="text-2xl font-bold">{ideaTitle}</h2>
+  
+	  {/* Back link above the Title */}
 	  <Link to="/" className="text-blue-600 underline">
 		← Back
 	  </Link>
-
+	  <h2 className="text-2xl font-bold mt-2">{ideaTitle}</h2>
+  
 	  {/* Progress bar */}
 	  <TaskProgressBar
 		completedTasks={completedTasks}
 		totalTasks={totalTasks}
 		percentage={percentage}
 	  />
-
+  
 	  {/* New top-level Task form */}
 	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex gap-2">
 		<input
@@ -852,7 +855,7 @@ function IdeaDetail({ airtableUser }) {
 		  Add
 		</button>
 	  </form>
-
+  
 	  <h3 className="mt-4 text-lg font-semibold">Tasks:</h3>
 	  {finalTopTasks.length === 0 ? (
 		<p className="text-gray-600">No tasks yet.</p>
@@ -868,12 +871,12 @@ function IdeaDetail({ airtableUser }) {
 			  MilestoneID,
 			  MilestoneName,
 			} = task.fields;
-
+  
 			const isEditing = editingTaskId === task.id;
 			const titleClasses = `font-semibold ${
 			  Completed ? "line-through text-gray-500" : ""
 			}`;
-
+  
 			let completedLabel = "";
 			if (Completed && CompletedTime) {
 			  try {
@@ -883,10 +886,10 @@ function IdeaDetail({ airtableUser }) {
 				completedLabel = "Invalid date";
 			  }
 			}
-
+  
 			// Instead of a boolean for "Today", we check Focus === "today"
 			const focusEmoji = Focus === "today" ? "☀️" : "💤";
-
+  
 			// If there's a milestone => display above
 			let milestoneRow = null;
 			if (MilestoneID) {
@@ -931,15 +934,15 @@ function IdeaDetail({ airtableUser }) {
 				</p>
 			  );
 			}
-
-			// Subtasks => we’ll reference getSortedSubtasks
+  
+			// Subtasks => reference getSortedSubtasks
 			const childTasks = getSortedSubtasks(TaskID);
-
+  
 			return (
 			  <li key={task.id} className="border border-gray-300 rounded p-3">
 				{/* Milestone row above main row */}
 				{milestoneRow}
-
+  
 				{/* Main row => top-level */}
 				<div className="flex items-center gap-2">
 				  {!Completed && (
@@ -950,7 +953,7 @@ function IdeaDetail({ airtableUser }) {
 					  ⇅
 					</div>
 				  )}
-
+  
 				  {/* The "Focus" emoji => toggles Focus = "today" or "" */}
 				  <span
 					className="cursor-pointer"
@@ -959,14 +962,14 @@ function IdeaDetail({ airtableUser }) {
 				  >
 					{focusEmoji}
 				  </span>
-
+  
 				  {/* Completed checkbox */}
 				  <input
 					type="checkbox"
 					checked={!!Completed}
 					onChange={() => handleToggleCompleted(task)}
 				  />
-
+  
 				  {isEditing ? (
 					<input
 					  type="text"
@@ -992,13 +995,13 @@ function IdeaDetail({ airtableUser }) {
 					</span>
 				  )}
 				</div>
-
+  
 				{Completed && completedLabel && (
 				  <p className="text-xs text-gray-500 ml-6 mt-1">
 					{completedLabel}
 				  </p>
 				)}
-
+  
 				{/* + Add Subtask link */}
 				<div className="ml-6 mt-1">
 				  <span
@@ -1008,7 +1011,7 @@ function IdeaDetail({ airtableUser }) {
 					+ Add Subtask
 				  </span>
 				</div>
-
+  
 				{/* CHILD SUBTASKS => if any */}
 				{childTasks.length > 0 && (
 				  <ul
@@ -1025,12 +1028,12 @@ function IdeaDetail({ airtableUser }) {
 						MilestoneID: subMileID,
 						MilestoneName: subMileName,
 					  } = sub.fields;
-
+  
 					  const isEditingSub = editingTaskId === subId;
 					  const subTitleClasses = subCompleted
 						? "line-through text-gray-500"
 						: "";
-
+  
 					  let subCompletedLabel = "";
 					  if (subCompleted && subCT) {
 						try {
@@ -1040,10 +1043,11 @@ function IdeaDetail({ airtableUser }) {
 						  subCompletedLabel = "Invalid date";
 						}
 					  }
-
+  
 					  // Subtask's focus toggle
-					  const subFocusEmoji = subFocus === "today" ? "☀️" : "💤";
-
+					  const subFocusEmoji =
+						subFocus === "today" ? "☀️" : "💤";
+  
 					  // Subtask milestone
 					  let subMilesRow = null;
 					  if (subMileID) {
@@ -1052,7 +1056,8 @@ function IdeaDetail({ airtableUser }) {
 						  const fm = allMilestones.find(
 							(m) => m.fields.MilestoneID === subMileID
 						  );
-						  actualName = fm?.fields?.MilestoneName || "(Unknown)";
+						  actualName =
+							fm?.fields?.MilestoneName || "(Unknown)";
 						}
 						subMilesRow = (
 						  <div className="group mb-1 inline-flex items-center">
@@ -1067,12 +1072,12 @@ function IdeaDetail({ airtableUser }) {
 							</p>
 							<span
 							  className="
-								ml-2 
-								text-xs 
-								text-blue-600 
-								underline 
-								cursor-pointer 
-								hidden 
+								ml-2
+								text-xs
+								text-blue-600
+								underline
+								cursor-pointer
+								hidden
 								group-hover:inline-block
 							  "
 							  onClick={() => handlePickMilestone(sub)}
@@ -1082,11 +1087,14 @@ function IdeaDetail({ airtableUser }) {
 						  </div>
 						);
 					  }
-
+  
 					  return (
-						<li key={subId} className="pl-2 border-b last:border-b-0 pb-2">
+						<li
+						  key={subId}
+						  className="pl-2 border-b last:border-b-0 pb-2"
+						>
 						  {subMilesRow}
-
+  
 						  <div className="flex items-center gap-2">
 							{/* Subtask drag handle => only for incomplete subtasks */}
 							{!subCompleted && (
@@ -1097,7 +1105,7 @@ function IdeaDetail({ airtableUser }) {
 								⇅
 							  </div>
 							)}
-
+  
 							{/* Focus toggle on subtask */}
 							<span
 							  className="cursor-pointer"
@@ -1105,19 +1113,21 @@ function IdeaDetail({ airtableUser }) {
 							>
 							  {subFocusEmoji}
 							</span>
-
+  
 							{/* Completed checkbox */}
 							<input
 							  type="checkbox"
 							  checked={!!subCompleted}
 							  onChange={() => handleToggleCompleted(sub)}
 							/>
-
+  
 							{isEditingSub ? (
 							  <input
 								type="text"
 								value={editingTaskName}
-								onChange={(e) => setEditingTaskName(e.target.value)}
+								onChange={(e) =>
+								  setEditingTaskName(e.target.value)
+								}
 								onBlur={() => commitTaskNameEdit(sub)}
 								onKeyDown={(e) => {
 								  if (e.key === "Enter") {
@@ -1138,7 +1148,7 @@ function IdeaDetail({ airtableUser }) {
 							  </span>
 							)}
 						  </div>
-
+  
 						  {subCompleted && subCompletedLabel && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
 							  {subCompletedLabel}
@@ -1156,6 +1166,9 @@ function IdeaDetail({ airtableUser }) {
 	  )}
 	</div>
   );
+
 }
+
+
 
 export default IdeaDetail;

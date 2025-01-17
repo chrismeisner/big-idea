@@ -152,7 +152,7 @@ function Milestones() {
   }
 
   return (
-	<div className="max-w-md mx-auto px-4 py-6">
+	<div className="container py-6">
 	  <Link to="/" className="text-blue-500 underline">
 		&larr; Back to your ideas
 	  </Link>

@@ -409,7 +409,7 @@ function MilestoneDetail() {
   const { MilestoneTime, MilestoneNotes } = milestone.fields;
 
   return (
-	<div className="max-w-md mx-auto px-4 py-6">
+	<div className="container py-6">
 	  {/* Link back */}
 	  <Link to="/milestones" className="text-blue-600 underline">
 		&larr; Back to Milestones
