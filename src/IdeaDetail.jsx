@@ -1,6 +1,6 @@
 // File: /src/IdeaDetail.jsx
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import Sortable from "sortablejs";
 
@@ -35,6 +35,9 @@ function IdeaDetail({ airtableUser }) {
   // Sortable ref for uncompleted top-level tasks
   const topLevelListRef = useRef(null);
   const topLevelSortableRef = useRef(null);
+
+  // ** NEW: Refs for subtask lists => subtaskRefs.current[parentTaskID] = DOM <ul> **
+  const subtaskRefs = useRef({});
 
   // ------------------------------------------------------------------
   // 1) Fetch Idea + Tasks + Milestones
@@ -87,9 +90,12 @@ function IdeaDetail({ airtableUser }) {
 	  setTasks(mappedTasks);
 
 	  // C) Fetch all Milestones
-	  const msResp = await fetch(`https://api.airtable.com/v0/${baseId}/Milestones`, {
-		headers: { Authorization: `Bearer ${apiKey}` },
-	  });
+	  const msResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Milestones`,
+		{
+		  headers: { Authorization: `Bearer ${apiKey}` },
+		}
+	  );
 	  if (!msResp.ok) {
 		throw new Error(
 		  `Airtable error (Milestones): ${msResp.status} ${msResp.statusText}`
@@ -131,12 +137,9 @@ function IdeaDetail({ airtableUser }) {
 	const inc = subs.filter((s) => !s.fields.Completed);
 	const comp = subs.filter((s) => s.fields.Completed);
 
-	// uncompleted => alphabetical
-	inc.sort((a, b) => {
-	  const nA = (a.fields.TaskName || "").toLowerCase();
-	  const nB = (b.fields.TaskName || "").toLowerCase();
-	  return nA.localeCompare(nB);
-	});
+	// uncompleted => alphabetical or by SubOrder if you want
+	// We'll do SubOrder ascending if it exists
+	inc.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 
 	// completed => CompletedTime desc
 	comp.sort((a, b) => {
@@ -227,6 +230,107 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
+  // 3b) **NEW**: Sortable for each subtask list
+  // ------------------------------------------------------------------
+  useLayoutEffect(() => {
+	if (!loading && tasks.length > 0) {
+	  const parentTasks = tasks.filter((t) => !t.fields.ParentTask);
+	  parentTasks.forEach((p) => {
+		const subListEl = subtaskRefs.current[p.id];
+		if (!subListEl) return; // no ref yet
+
+		// We only reorder incomplete subtasks
+		const incompleteSubs = tasks.filter(
+		  (s) => s.fields.ParentTask === p.fields.TaskID && !s.fields.Completed
+		);
+		if (incompleteSubs.length === 0) return;
+
+		// If there's an existing sortable instance, destroy it first
+		if (subListEl._sortable) {
+		  subListEl._sortable.destroy();
+		}
+
+		// Now create a new Sortable
+		subListEl._sortable = new Sortable(subListEl, {
+		  animation: 150,
+		  handle: ".sub-drag-handle",
+		  onEnd: (evt) => handleSubtaskSortEnd(evt, p),
+		});
+	  });
+	}
+
+	// Cleanup on unmount
+	return () => {
+	  Object.values(subtaskRefs.current).forEach((el) => {
+		if (el && el._sortable) {
+		  el._sortable.destroy();
+		}
+	  });
+	};
+  }, [loading, tasks]);
+
+  async function handleSubtaskSortEnd(evt, parentTask) {
+	const { oldIndex, newIndex } = evt;
+	if (oldIndex === newIndex) return;
+
+	// We'll reorder only uncompleted subs
+	const incSubs = tasks.filter(
+	  (s) =>
+		s.fields.ParentTask === parentTask.fields.TaskID && !s.fields.Completed
+	);
+
+	const updatedSubs = [...incSubs];
+	const [movedItem] = updatedSubs.splice(oldIndex, 1);
+	updatedSubs.splice(newIndex, 0, movedItem);
+
+	// Reassign SubOrder
+	updatedSubs.forEach((sub, idx) => {
+	  sub.fields.SubOrder = idx + 1;
+	});
+
+	// Rebuild local tasks
+	// The parentTask + other tasks remain the same
+	// We just replaced these subtasks with updated SubOrder
+	const otherTasks = tasks.filter((t) => t.fields.ParentTask !== parentTask.fields.TaskID);
+	const newAll = [...otherTasks, ...updatedSubs];
+	setTasks(newAll);
+
+	try {
+	  await patchSubOrderInAirtable(updatedSubs);
+	} catch (err) {
+	  console.error("Error reordering subtasks:", err);
+	  setError("Failed to reorder subtasks. Please refresh.");
+	}
+  }
+
+  async function patchSubOrderInAirtable(subArr) {
+	if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+
+	const records = subArr.map((s) => ({
+	  id: s.id,
+	  fields: { SubOrder: s.fields.SubOrder },
+	}));
+
+	const chunkSize = 10;
+	for (let i = 0; i < records.length; i += chunkSize) {
+	  const chunk = records.slice(i, i + chunkSize);
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({ records: chunk }),
+	  });
+	  if (!resp.ok) {
+		const airtableError = await resp.json().catch(() => ({}));
+		console.error("Airtable patch error (subtasks):", airtableError);
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	}
+  }
+
+  // ------------------------------------------------------------------
   // 4) Create new top-level Task => top of uncompleted
   //     Now includes "UserID: userId"
   // ------------------------------------------------------------------
@@ -248,10 +352,9 @@ function IdeaDetail({ airtableUser }) {
 		  return task;
 		});
 		const completed = top.filter((t) => t.fields.Completed);
-		const mergedTop = [...shifted, ...completed];
 		const subs = tasks.filter((t) => t.fields.ParentTask);
-		setTasks([...mergedTop, ...subs]);
 
+		setTasks([...shifted, ...completed, ...subs]);
 		await patchOrderToAirtable(shifted);
 	  }
 
@@ -635,6 +738,11 @@ function IdeaDetail({ airtableUser }) {
 		throw new Error("Parent task lacks a TaskID field.");
 	  }
 
+	  // We'll store SubOrder = 999 for newly created subtask (or dynamically figure out next index)
+	  // e.g. we can set SubOrder to childSubs.length + 1
+	  const childSubs = tasks.filter((t) => t.fields.ParentTask === parentTaskID);
+	  const nextSubOrder = childSubs.length + 1;
+
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -649,6 +757,7 @@ function IdeaDetail({ airtableUser }) {
 				ParentTask: parentTaskID,
 				IdeaID: parentTask.fields.IdeaID,
 				UserID: userId,
+				SubOrder: nextSubOrder,
 			  },
 			},
 		  ],
@@ -823,7 +932,7 @@ function IdeaDetail({ airtableUser }) {
 			  );
 			}
 
-			// Subtasks
+			// Subtasks => we’ll reference getSortedSubtasks
 			const childTasks = getSortedSubtasks(TaskID);
 
 			return (
@@ -890,6 +999,7 @@ function IdeaDetail({ airtableUser }) {
 				  </p>
 				)}
 
+				{/* + Add Subtask link */}
 				<div className="ml-6 mt-1">
 				  <span
 					className="text-xs text-blue-600 underline cursor-pointer"
@@ -899,8 +1009,12 @@ function IdeaDetail({ airtableUser }) {
 				  </span>
 				</div>
 
+				{/* CHILD SUBTASKS => if any */}
 				{childTasks.length > 0 && (
-				  <ul className="mt-2 ml-6 border-l border-gray-200 space-y-2">
+				  <ul
+					className="mt-2 ml-6 border-l border-gray-200 space-y-2"
+					ref={(el) => (subtaskRefs.current[task.id] = el)}
+				  >
 					{childTasks.map((sub) => {
 					  const subId = sub.id;
 					  const {
@@ -970,10 +1084,20 @@ function IdeaDetail({ airtableUser }) {
 					  }
 
 					  return (
-						<li key={subId} className="pl-2">
+						<li key={subId} className="pl-2 border-b last:border-b-0 pb-2">
 						  {subMilesRow}
 
 						  <div className="flex items-center gap-2">
+							{/* Subtask drag handle => only for incomplete subtasks */}
+							{!subCompleted && (
+							  <div
+								className="sub-drag-handle text-gray-400 cursor-grab active:cursor-grabbing"
+								title="Drag to reorder subtasks"
+							  >
+								⇅
+							  </div>
+							)}
+
 							{/* Focus toggle on subtask */}
 							<span
 							  className="cursor-pointer"

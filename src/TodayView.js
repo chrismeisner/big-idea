@@ -12,6 +12,65 @@ import { Link } from "react-router-dom";
 
 function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
+  // 0) Daily countdown to 4:20 PM
+  // ------------------------------------------------------------------
+  const [dailyCountdown, setDailyCountdown] = useState("");
+
+  useEffect(() => {
+	function getTargetTime() {
+	  // Build a Date object for "today at 16:20" local time
+	  // If it's already past 4:20pm, we use "tomorrow at 16:20"
+	  const now = new Date();
+	  const target = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+		16, // 16 = 4pm
+		20, // 20 minutes
+		0,
+		0
+	  );
+	  if (target < now) {
+		// If it's already past 4:20pm, schedule for tomorrow
+		target.setDate(target.getDate() + 1);
+	  }
+	  return target;
+	}
+
+	function updateCountdown() {
+	  const now = new Date().getTime();
+	  const target = getTargetTime().getTime();
+	  const diffMs = target - now;
+
+	  if (diffMs <= 0) {
+		// If we've passed the time, just reset
+		setDailyCountdown("Time’s up!");
+		return;
+	  }
+
+	  // Convert ms => d/h/m/s
+	  const totalSeconds = Math.floor(diffMs / 1000);
+	  const days = Math.floor(totalSeconds / 86400);
+	  const hours = Math.floor((totalSeconds % 86400) / 3600);
+	  const mins = Math.floor((totalSeconds % 3600) / 60);
+	  const secs = totalSeconds % 60;
+
+	  // Build a readable string
+	  // e.g. "12h 34m 56s" or "1d 2h 0m 10s"
+	  let result = "";
+	  if (days > 0) result += `${days}d `;
+	  if (days > 0 || hours > 0) result += `${hours}h `;
+	  result += `${mins}m ${secs}s`;
+
+	  setDailyCountdown(result + " until 4:20pm");
+	}
+
+	updateCountdown(); // run immediately
+	const timerId = setInterval(updateCountdown, 1000);
+	return () => clearInterval(timerId);
+  }, []);
+
+  // ------------------------------------------------------------------
   // 1) State
   // ------------------------------------------------------------------
   const [tasks, setTasks] = useState([]);
@@ -20,14 +79,13 @@ function TodayView({ airtableUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // For daily countdown to 4:20 PM
-  const [countdown, setCountdown] = useState("");
-
   // ------------------------------------------------------------------
-  // 2) Refs for Sortable
+  // 2) Refs for Sortable: top-level incomplete tasks
+  //    Also subtaskRefs => an object of refs for each parent's subtasks
   // ------------------------------------------------------------------
   const incompleteListRef = useRef(null);
   const sortableRef = useRef(null);
+  const subtaskRefs = useRef({}); // subtaskRefs.current[parentTaskID] = DOM element
 
   // ------------------------------------------------------------------
   // Airtable ENV
@@ -35,46 +93,6 @@ function TodayView({ airtableUser }) {
   const userId = airtableUser?.fields?.UserID || null;
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
-
-  // ------------------------------------------------------------------
-  // Daily Countdown => next 4:20 PM
-  // ------------------------------------------------------------------
-  useEffect(() => {
-	function getNext420() {
-	  const now = new Date();
-	  const target = new Date(now);
-	  target.setHours(16, 20, 0, 0); // 16:20:00.000
-
-	  // If 4:20 PM is already past for today, set target to tomorrow
-	  if (target <= now) {
-		target.setDate(target.getDate() + 1);
-	  }
-	  return target;
-	}
-
-	function updateCountdown() {
-	  const now = new Date();
-	  const target = getNext420();
-	  const diffMs = target - now;
-	  if (diffMs <= 0) {
-		// Just set to 0:00:00 if somehow negative
-		setCountdown("00:00:00");
-		return;
-	  }
-
-	  const totalSec = Math.floor(diffMs / 1000);
-	  const hours = String(Math.floor(totalSec / 3600)).padStart(2, "0");
-	  const minutes = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
-	  const seconds = String(totalSec % 60).padStart(2, "0");
-	  setCountdown(`${hours}:${minutes}:${seconds}`);
-	}
-
-	// Update every second
-	updateCountdown(); // run once immediately
-	const intervalId = setInterval(updateCountdown, 1000);
-
-	return () => clearInterval(intervalId);
-  }, []);
 
   // ------------------------------------------------------------------
   // Subcomponent: TodayProgressBar
@@ -87,7 +105,7 @@ function TodayView({ airtableUser }) {
 	return (
 	  <div className="my-4">
 		<p className="text-sm text-gray-600">
-		  {completedTasks} of {totalTasks} tasks completed
+		  {completedTasks} of {totalTasks} completed
 		  <span className="ml-2">({percentage}%)</span>
 		</p>
 		<div className="bg-gray-200 h-3 rounded mt-1 w-full">
@@ -101,7 +119,8 @@ function TodayView({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 3) Fetch tasks, ideas, milestones => tasks where {Focus}="today"
+  // 3) Fetch tasks, ideas, milestones
+  //     Only tasks where {Focus}="today".
   // ------------------------------------------------------------------
   useEffect(() => {
 	if (!userId) {
@@ -186,11 +205,11 @@ function TodayView({ airtableUser }) {
   }, [userId, baseId, apiKey]);
 
   // ------------------------------------------------------------------
-  // 4) Sortable for incomplete tasks
+  // 4) "Top-level" Sortable for incomplete tasks
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
 	if (!loading && incompleteListRef.current && !sortableRef.current) {
-	  const inc = getIncompleteTasks();
+	  const inc = getIncompleteParentTasks(); // only top-level
 	  if (inc.length > 0) {
 		sortableRef.current = new Sortable(incompleteListRef.current, {
 		  animation: 150,
@@ -211,7 +230,8 @@ function TodayView({ airtableUser }) {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	const incompletes = getIncompleteTasks();
+	// Reorder only the top-level incomplete tasks
+	const incompletes = getIncompleteParentTasks();
 	const updatedIncompletes = [...incompletes];
 	const [moved] = updatedIncompletes.splice(oldIndex, 1);
 	updatedIncompletes.splice(newIndex, 0, moved);
@@ -221,9 +241,13 @@ function TodayView({ airtableUser }) {
 	  task.fields.OrderToday = i + 1;
 	});
 
-	// Combine with completed tasks
-	const completed = getCompletedTasks();
-	setTasks([...updatedIncompletes, ...completed]);
+	// Now we re-build the entire tasks array
+	// completed tasks remain the same
+	// subtasks remain as-is
+	const completed = tasks.filter((t) => t.fields.Completed);
+	const subtasksOnly = tasks.filter((t) => t.fields.ParentTask);
+
+	setTasks([...updatedIncompletes, ...completed, ...subtasksOnly]);
 
 	try {
 	  await patchOrderTodayToAirtable(updatedIncompletes);
@@ -244,6 +268,109 @@ function TodayView({ airtableUser }) {
 		id: task.id,
 		fields: {
 		  OrderToday: task.fields.OrderToday,
+		},
+	  }));
+
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({ records }),
+	  });
+	  if (!resp.ok) {
+		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+	  }
+	}
+  }
+
+  // ------------------------------------------------------------------
+  // 4b) Subtask Sortable => one instance per parent
+  // ------------------------------------------------------------------
+  // We'll re-init each time tasks change.
+  useLayoutEffect(() => {
+	if (!loading && tasks.length > 0) {
+	  // For each parent, if there's a subtask list, create a Sortable
+	  const parentTasks = tasks.filter((t) => !t.fields.ParentTask);
+	  parentTasks.forEach((p) => {
+		// We'll only do a Sortable if that parent has incomplete subtasks
+		const incompleteSubs = getIncompleteSubtasks(p);
+		if (incompleteSubs.length === 0) return;
+
+		// subtaskRefs.current[p.id] => the <ul> node in the DOM
+		const listEl = subtaskRefs.current[p.id];
+		if (!listEl) return; // hasn't rendered yet
+
+		// If there's already a Sortable, destroy it first (to re-init)
+		if (listEl._sortable) {
+		  listEl._sortable.destroy();
+		}
+
+		const subSortable = new Sortable(listEl, {
+		  animation: 150,
+		  handle: ".sub-drag-handle",
+		  onEnd: (evt) => handleSubtaskSortEnd(evt, p),
+		});
+		// Store a reference so we can destroy on cleanup
+		listEl._sortable = subSortable;
+	  });
+	}
+
+	return () => {
+	  // Cleanup: destroy any existing Sortable instances
+	  Object.values(subtaskRefs.current).forEach((ul) => {
+		if (ul && ul._sortable) {
+		  ul._sortable.destroy();
+		}
+	  });
+	};
+  }, [loading, tasks]);
+
+  async function handleSubtaskSortEnd(evt, parent) {
+	const { oldIndex, newIndex } = evt;
+	if (oldIndex === newIndex) return;
+
+	const incSubs = getIncompleteSubtasks(parent);
+	const updatedSubs = [...incSubs];
+	const [moved] = updatedSubs.splice(oldIndex, 1);
+	updatedSubs.splice(newIndex, 0, moved);
+
+	// Reassign SubOrder
+	updatedSubs.forEach((st, i) => {
+	  st.fields.SubOrder = i + 1;
+	});
+
+	// Rebuild local tasks
+	// We only changed these subtasks
+	const allOthers = tasks.filter((t) => t.fields.ParentTask !== parent.fields.TaskID);
+	updatedSubs.forEach((u) => {
+	  const idx = allOthers.findIndex((x) => x.id === u.id);
+	  if (idx >= 0) {
+		allOthers[idx] = u; // update if needed
+	  }
+	});
+	setTasks([...allOthers, ...updatedSubs]);
+
+	try {
+	  await patchSubOrderToAirtable(updatedSubs);
+	} catch (err) {
+	  console.error("Error updating SubOrder in Airtable:", err);
+	  setError("Failed to reorder subtasks. Please try again.");
+	}
+  }
+
+  async function patchSubOrderToAirtable(subArray) {
+	if (!baseId || !apiKey) {
+	  throw new Error("Missing Airtable credentials.");
+	}
+	const chunkSize = 10;
+	for (let i = 0; i < subArray.length; i += chunkSize) {
+	  const chunk = subArray.slice(i, i + chunkSize);
+	  const records = chunk.map((task) => ({
+		id: task.id,
+		fields: {
+		  SubOrder: task.fields.SubOrder,
 		},
 	  }));
 
@@ -406,26 +533,56 @@ function TodayView({ airtableUser }) {
   };
 
   // ------------------------------------------------------------------
-  // 6) Helper functions => incomplete & completed
+  // 6) Helper functions => grouping tasks
   // ------------------------------------------------------------------
-  function getIncompleteTasks() {
-	const inc = tasks.filter((t) => !t.fields.Completed);
-	inc.sort((a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
-	return inc;
+  function getIncompleteParentTasks() {
+	// Parent tasks => no ParentTask
+	const parents = tasks.filter((t) => !t.fields.ParentTask && !t.fields.Completed);
+	// sort by OrderToday
+	parents.sort((a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
+	return parents;
   }
 
-  function getCompletedTasks() {
-	const comp = tasks.filter((t) => t.fields.Completed);
-	comp.sort((a, b) => {
+  function getCompletedParentTasks() {
+	// Completed parents => no ParentTask
+	const parents = tasks.filter((t) => !t.fields.ParentTask && t.fields.Completed);
+	// sort by CompletedTime desc
+	parents.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
 	  const tB = b.fields.CompletedTime || "";
 	  return tB.localeCompare(tA);
 	});
-	return comp;
+	return parents;
+  }
+
+  function getIncompleteSubtasks(parentTask) {
+	const parentID = parentTask.fields.TaskID;
+	if (!parentID) return [];
+	const subs = tasks.filter(
+	  (s) => s.fields.ParentTask === parentID && !s.fields.Completed
+	);
+	// sort by SubOrder ascending
+	subs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
+	return subs;
+  }
+
+  function getCompletedSubtasks(parentTask) {
+	const parentID = parentTask.fields.TaskID;
+	if (!parentID) return [];
+	const subs = tasks.filter(
+	  (s) => s.fields.ParentTask === parentID && s.fields.Completed
+	);
+	// sort by CompletedTime desc
+	subs.sort((a, b) => {
+	  const tA = a.fields.CompletedTime || "";
+	  const tB = b.fields.CompletedTime || "";
+	  return tB.localeCompare(tA);
+	});
+	return subs;
   }
 
   // ------------------------------------------------------------------
-  // 7) Lookup: Idea / Milestone / Parent Task
+  // 7) Lookup: Idea / Milestone
   // ------------------------------------------------------------------
   const findIdeaForTask = (task) => {
 	const ideaId = task.fields.IdeaID;
@@ -438,20 +595,6 @@ function TodayView({ airtableUser }) {
 	if (!milestoneId) return null;
 	return milestones.find((m) => m.fields.MilestoneID === milestoneId) || null;
   };
-
-  /**
-   * findParentTaskName:
-   *  - If “ParentTask” stores a custom TaskID, then we find that parent among the tasks we have loaded.
-   *  - If the parent is not in the “today” list, we might not find it. But we’ll try anyway.
-   */
-  function findParentTaskName(task) {
-	const parentId = task.fields.ParentTask;
-	if (!parentId) return null;
-	// Among all tasks we have, find one whose fields.TaskID === parentId
-	const parent = tasks.find((t) => t.fields.TaskID === parentId);
-	if (!parent) return null;
-	return parent.fields.TaskName || "(Untitled Parent)";
-  }
 
   // ------------------------------------------------------------------
   // 8) Progress calculations
@@ -471,8 +614,9 @@ function TodayView({ airtableUser }) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
 
-  const incompleteTasks = getIncompleteTasks();
-  const completedTasks = getCompletedTasks();
+  // Gather top-level tasks
+  const incompleteParents = getIncompleteParentTasks();
+  const completedParents = getCompletedParentTasks();
 
   // If zero tasks total
   if (tasks.length === 0) {
@@ -485,12 +629,12 @@ function TodayView({ airtableUser }) {
 
   return (
 	<div className="max-w-md mx-auto px-4 py-6">
-	  {/* DAILY COUNTDOWN => 4:20 PM */}
-	  <div className="mb-3 text-lg font-bold text-red-600">
-		{countdown}
+	  {/* Daily Countdown */}
+	  <div className="mb-2 text-sm text-red-600 font-semibold">
+		{dailyCountdown}
 	  </div>
 
-	  <h2 className="text-2xl font-bold mb-4">Your “Today” Tasks</h2>
+	  <h2 className="text-2xl font-bold mb-4">Today's Tasks</h2>
 
 	  {/* Progress Bar */}
 	  <TodayProgressBar
@@ -499,32 +643,33 @@ function TodayView({ airtableUser }) {
 		percentage={percentage}
 	  />
 
-	  {/* ------------- INCOMPLETE TASKS ------------- */}
-	  {incompleteTasks.length > 0 && (
+	  {/* ------------- INCOMPLETE PARENTS ------------- */}
+	  {incompleteParents.length > 0 && (
 		<ul className="divide-y border rounded mb-6" ref={incompleteListRef}>
-		  {incompleteTasks.map((task, index) => {
-			const isCompleted = task.fields.Completed || false;
-			const completedTime = task.fields.CompletedTime || null;
-			const isFocusToday = task.fields.Focus === "today";
+		  {incompleteParents.map((parent, index) => {
+			const isCompleted = parent.fields.Completed || false; // should be false
+			const completedTime = parent.fields.CompletedTime || null;
+			const isFocusToday = parent.fields.Focus === "today";
 
 			// "top item in gold" style
 			const topItemClass =
 			  index === 0 ? "bg-amber-100" : "hover:bg-gray-50";
 
-			const idea = findIdeaForTask(task);
+			const idea = findIdeaForTask(parent);
 			const ideaTitle = idea?.fields?.IdeaTitle || "(Untitled Idea)";
 			const ideaCustomId = idea?.fields?.IdeaID;
 
-			const milestone = findMilestoneForTask(task);
+			const milestone = findMilestoneForTask(parent);
 			const milestoneName = milestone?.fields?.MilestoneName || "";
 			const milestoneCustomId = milestone?.fields?.MilestoneID;
 
-			// If this task is a subtask => show the parent's name
-			const parentName = findParentTaskName(task);
+			// Subtasks => incomplete vs completed
+			const incSubs = getIncompleteSubtasks(parent);
+			const compSubs = getCompletedSubtasks(parent);
 
 			return (
 			  <li
-				key={task.id}
+				key={parent.id}
 				className={`p-3 flex flex-col transition-colors ${topItemClass}`}
 			  >
 				{/* If there's a milestone, show above the task */}
@@ -568,7 +713,7 @@ function TodayView({ airtableUser }) {
 				  <input
 					type="checkbox"
 					checked={isCompleted}
-					onChange={() => handleToggleCompleted(task)}
+					onChange={() => handleToggleCompleted(parent)}
 					className="mr-3"
 				  />
 
@@ -577,14 +722,14 @@ function TodayView({ airtableUser }) {
 					<span
 					  className={isCompleted ? "line-through text-gray-500" : ""}
 					>
-					  {task.fields.TaskName || "(Untitled Task)"}
+					  {parent.fields.TaskName || "(Untitled Task)"}
 					</span>
 				  </div>
 
 				  {/* Focus toggle => use ☀️ if Focus="today", else 💤 */}
 				  <span
 					className="ml-3 cursor-pointer text-xl"
-					onClick={() => handleToggleFocus(task)}
+					onClick={() => handleToggleFocus(parent)}
 					title='Toggle "Focus" to "today"'
 				  >
 					{isFocusToday ? "☀️" : "💤"}
@@ -595,13 +740,6 @@ function TodayView({ airtableUser }) {
 				{isCompleted && completedTime && (
 				  <p className="text-xs text-gray-500 ml-6 mt-1">
 					Completed on {new Date(completedTime).toLocaleString()}
-				  </p>
-				)}
-
-				{/* If this is a subtask (i.e. has a parent), display the parent's name */}
-				{parentName && (
-				  <p className="text-xs font-bold text-gray-600 ml-6 mt-1">
-					Parent: {parentName}
 				  </p>
 				)}
 
@@ -616,35 +754,171 @@ function TodayView({ airtableUser }) {
 					</Link>
 				  </div>
 				)}
+
+				{/* =========== SUBTASKS for this parent =========== */}
+				{incSubs.length > 0 && (
+				  <ul
+					className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y"
+					ref={(el) => (subtaskRefs.current[parent.id] = el)}
+				  >
+					{incSubs.map((sub, idx) => {
+					  const subCompleted = sub.fields.Completed || false;
+					  const subTime = sub.fields.CompletedTime || null;
+					  const isFocusSub = sub.fields.Focus === "today";
+
+					  const subIdea = findIdeaForTask(sub);
+					  const subIdeaTitle = subIdea?.fields?.IdeaTitle || "(Untitled Idea)";
+					  const subIdeaCustomId = subIdea?.fields?.IdeaID;
+
+					  const subMile = findMilestoneForTask(sub);
+					  const subMileName = subMile?.fields?.MilestoneName || "";
+					  const subMileID = subMile?.fields?.MilestoneID;
+
+					  return (
+						<li key={sub.id} className="py-2 pr-2">
+						  {/* Subtask row => sub-drag handle, completed, name, focus */}
+						  <div className="flex items-center">
+							{/* Drag handle (sub) */}
+							<div
+							  className="sub-drag-handle mr-2 text-gray-400 cursor-grab active:cursor-grabbing"
+							  title="Drag to reorder subtasks"
+							>
+							  ⇅
+							</div>
+
+							{/* Completed checkbox */}
+							<input
+							  type="checkbox"
+							  checked={subCompleted}
+							  onChange={() => handleToggleCompleted(sub)}
+							  className="mr-3"
+							/>
+
+							{/* Name */}
+							<div className="flex-1">
+							  <span
+								className={
+								  subCompleted ? "line-through text-gray-500" : ""
+								}
+							  >
+								{sub.fields.TaskName || "(Untitled Subtask)"}
+							  </span>
+							</div>
+
+							{/* Focus toggle */}
+							<span
+							  className="ml-3 cursor-pointer text-xl"
+							  onClick={() => handleToggleFocus(sub)}
+							  title='Toggle "Focus" to "today"'
+							>
+							  {isFocusSub ? "☀️" : "💤"}
+							</span>
+						  </div>
+
+						  {subCompleted && subTime && (
+							<p className="text-xs text-gray-500 ml-6 mt-1">
+							  Completed on {new Date(subTime).toLocaleString()}
+							</p>
+						  )}
+
+						  {/* Subtask idea link */}
+						  {subIdea && (
+							<div className="ml-6 mt-1">
+							  <Link
+								to={`/ideas/${subIdeaCustomId}`}
+								className="text-xs text-blue-600 underline"
+							  >
+								{subIdeaTitle}
+							  </Link>
+							</div>
+						  )}
+
+						  {/* Subtask milestone */}
+						  {subMile && (
+							<div className="ml-6 mt-1">
+							  <span className="text-xs text-blue-700 font-semibold">
+								🏔{" "}
+								<Link
+								  to={`/milestones/${subMileID}`}
+								  className="underline"
+								>
+								  {subMileName || "(Unnamed Milestone)"}
+								</Link>
+							  </span>
+							</div>
+						  )}
+						</li>
+					  );
+					})}
+				  </ul>
+				)}
+
+				{/* COMPLETED SUBTASKS? */}
+				{compSubs.length > 0 && (
+				  <ul className="mt-1 ml-6 pl-3 border-l border-gray-200 divide-y">
+					{compSubs.map((sub) => {
+					  const subTime = sub.fields.CompletedTime || null;
+					  const isFocusSub = sub.fields.Focus === "today";
+
+					  return (
+						<li key={sub.id} className="py-2 pr-2 flex flex-col">
+						  <div className="flex items-center">
+							{/* Completed checkbox */}
+							<input
+							  type="checkbox"
+							  checked={true}
+							  onChange={() => handleToggleCompleted(sub)}
+							  className="mr-3"
+							/>
+							<div className="flex-1">
+							  <span className="line-through text-gray-500">
+								{sub.fields.TaskName || "(Untitled Subtask)"}
+							  </span>
+							</div>
+							<span
+							  className="ml-3 cursor-pointer text-xl"
+							  onClick={() => handleToggleFocus(sub)}
+							  title='Toggle "Focus" to "today"'
+							>
+							  {isFocusSub ? "☀️" : "💤"}
+							</span>
+						  </div>
+						  {subTime && (
+							<p className="text-xs text-gray-500 ml-6 mt-1">
+							  Completed on {new Date(subTime).toLocaleString()}
+							</p>
+						  )}
+						</li>
+					  );
+					})}
+				  </ul>
+				)}
 			  </li>
 			);
 		  })}
 		</ul>
 	  )}
 
-	  {/* ------------- COMPLETED TASKS ------------- */}
-	  {completedTasks.length > 0 && (
+	  {/* ------------- COMPLETED PARENTS ------------- */}
+	  {completedParents.length > 0 && (
 		<ul className="divide-y border rounded">
-		  {completedTasks.map((task) => {
-			const completedTime = task.fields.CompletedTime || null;
-			const isFocusToday = task.fields.Focus === "today";
+		  {completedParents.map((parent) => {
+			const completedTime = parent.fields.CompletedTime || null;
+			const isFocusToday = parent.fields.Focus === "today";
 
-			const idea = findIdeaForTask(task);
+			const idea = findIdeaForTask(parent);
 			const ideaTitle = idea?.fields?.IdeaTitle || "(Untitled Idea)";
 			const ideaCustomId = idea?.fields?.IdeaID;
 
-			const milestone = findMilestoneForTask(task);
+			const milestone = findMilestoneForTask(parent);
 			const milestoneName = milestone?.fields?.MilestoneName || "";
 			const milestoneCustomId = milestone?.fields?.MilestoneID;
 
-			// Possibly show parent name if it’s a subtask
-			const parentName = findParentTaskName(task);
+			const incSubs = getIncompleteSubtasks(parent);
+			const compSubs = getCompletedSubtasks(parent);
 
 			return (
-			  <li
-				key={task.id}
-				className="p-3 flex flex-col hover:bg-gray-50"
-			  >
+			  <li key={parent.id} className="p-3 flex flex-col hover:bg-gray-50">
 				{/* If there's a milestone, show above */}
 				{milestone && (
 				  <div className="mb-1 inline-flex items-center ml-6">
@@ -666,21 +940,21 @@ function TodayView({ airtableUser }) {
 				  <input
 					type="checkbox"
 					checked={true}
-					onChange={() => handleToggleCompleted(task)}
+					onChange={() => handleToggleCompleted(parent)}
 					className="mr-3"
 				  />
 
 				  {/* Title */}
 				  <div className="flex-1">
 					<span className="line-through text-gray-500">
-					  {task.fields.TaskName || "(Untitled Task)"}
+					  {parent.fields.TaskName || "(Untitled Task)"}
 					</span>
 				  </div>
 
 				  {/* Focus toggle => use ☀️ if Focus="today", else 💤 */}
 				  <span
 					className="ml-3 cursor-pointer text-xl"
-					onClick={() => handleToggleFocus(task)}
+					onClick={() => handleToggleFocus(parent)}
 					title='Toggle "Focus" to "today"'
 				  >
 					{isFocusToday ? "☀️" : "💤"}
@@ -694,13 +968,6 @@ function TodayView({ airtableUser }) {
 				  </p>
 				)}
 
-				{/* Parent name if subtask */}
-				{parentName && (
-				  <p className="text-xs font-bold text-gray-600 ml-6 mt-1">
-					Parent: {parentName}
-				  </p>
-				)}
-
 				{/* Idea link */}
 				{idea && (
 				  <div className="ml-6 mt-1">
@@ -711,6 +978,92 @@ function TodayView({ airtableUser }) {
 					  {ideaTitle}
 					</Link>
 				  </div>
+				)}
+
+				{/* =========== COMPLETED parent's SUBTASKS =========== */}
+				{incSubs.length > 0 && (
+				  <ul className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y">
+					{incSubs.map((sub) => {
+					  const subCompleted = sub.fields.Completed || false;
+					  const subTime = sub.fields.CompletedTime || null;
+					  const isFocusSub = sub.fields.Focus === "today";
+
+					  return (
+						<li key={sub.id} className="py-2 pr-2 flex flex-col">
+						  <div className="flex items-center">
+							{/* Completed checkbox */}
+							<input
+							  type="checkbox"
+							  checked={subCompleted}
+							  onChange={() => handleToggleCompleted(sub)}
+							  className="mr-3"
+							/>
+							<div className="flex-1">
+							  <span
+								className={
+								  subCompleted ? "line-through text-gray-500" : ""
+								}
+							  >
+								{sub.fields.TaskName || "(Untitled Subtask)"}
+							  </span>
+							</div>
+							<span
+							  className="ml-3 cursor-pointer text-xl"
+							  onClick={() => handleToggleFocus(sub)}
+							  title='Toggle "Focus" to "today"'
+							>
+							  {isFocusSub ? "☀️" : "💤"}
+							</span>
+						  </div>
+						  {subCompleted && subTime && (
+							<p className="text-xs text-gray-500 ml-6 mt-1">
+							  Completed on {new Date(subTime).toLocaleString()}
+							</p>
+						  )}
+						</li>
+					  );
+					})}
+				  </ul>
+				)}
+
+				{compSubs.length > 0 && (
+				  <ul className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y">
+					{compSubs.map((sub) => {
+					  const subTime = sub.fields.CompletedTime || null;
+					  const isFocusSub = sub.fields.Focus === "today";
+
+					  return (
+						<li key={sub.id} className="py-2 pr-2 flex flex-col">
+						  <div className="flex items-center">
+							{/* Completed checkbox */}
+							<input
+							  type="checkbox"
+							  checked={true}
+							  onChange={() => handleToggleCompleted(sub)}
+							  className="mr-3"
+							/>
+							<div className="flex-1">
+							  <span className="line-through text-gray-500">
+								{sub.fields.TaskName || "(Untitled Subtask)"}
+							  </span>
+							</div>
+							<span
+							  className="ml-3 cursor-pointer text-xl"
+							  onClick={() => handleToggleFocus(sub)}
+							  title='Toggle "Focus" to "today"'
+							>
+							  {isFocusSub ? "☀️" : "💤"}
+							</span>
+						  </div>
+						  {subTime && (
+							<p className="text-xs text-gray-500 ml-6 mt-1">
+							  Completed on {new Date(subTime).toLocaleString()}
+							</p>
+						  )}
+						</li>
+					  );
+					})}
+				  </ul>
 				)}
 			  </li>
 			);
