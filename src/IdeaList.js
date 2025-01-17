@@ -1,11 +1,9 @@
-// File: /src/IdeaList.js
-
 import React from "react";
 import IdeaItem from "./IdeaItem";
 
 /**
  * IdeaList
- * 
+ *
  * Props:
  * - ideas: Array of Idea records
  * - tasks: Array of Task records
@@ -16,6 +14,8 @@ import IdeaItem from "./IdeaItem";
  * - handleDeleteClick: callback to delete an idea
  * - onCreateTask: callback to create a new Task in a given idea
  * - onPickMilestone: callback if we want to open a modal or otherwise handle milestone assignment
+ *
+ * - onDeleteIdea: callback from parent, so we can delete an idea if renamed "xxx"
  */
 function IdeaList({
   ideas,
@@ -27,7 +27,8 @@ function IdeaList({
   deleteConfirm,
   handleDeleteClick,
   onCreateTask,
-  onPickMilestone, // optional callback for picking a milestone
+  onPickMilestone,
+  onDeleteIdea, // <-- we add this
 }) {
   if (ideas.length === 0) {
 	return <p>No ideas found for your account.</p>;
@@ -54,16 +55,17 @@ function IdeaList({
 			key={idea.id}
 			idea={idea}
 			ideaTasks={ideaTasks}
-			allMilestones={milestones} // pass down all milestones
+			allMilestones={milestones}
 			isHovered={isHovered}
 			isConfirming={isConfirming}
 			onHoverEnter={() => setHoveredIdeaId(idea.id)}
 			onHoverLeave={() => setHoveredIdeaId(null)}
 			onDeleteClick={() => handleDeleteClick(idea.id)}
-			// For creating a new task in this idea
 			onTaskCreate={(taskName) => onCreateTask(ideaCustomId, taskName)}
-			// For picking a milestone in a modal, etc.
 			onPickMilestone={onPickMilestone}
+
+			// Forward onDeleteIdea to IdeaItem
+			onDeleteIdea={onDeleteIdea}
 		  />
 		);
 	  })}

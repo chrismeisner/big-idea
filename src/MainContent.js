@@ -1,5 +1,3 @@
-// File: /src/MainContent.js
-
 import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
@@ -94,7 +92,9 @@ function MainContent({ airtableUser }) {
 		setTasks(tasksData.records);
 
 		// C) Fetch Milestones => (optional) filter by userId
-		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		const msUrl = new URL(
+		  `https://api.airtable.com/v0/${baseId}/Milestones`
+		);
 		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
 		const milestonesResp = await fetch(msUrl.toString(), {
@@ -180,7 +180,9 @@ function MainContent({ airtableUser }) {
 
   async function updateIdeasOrderInAirtable(list) {
 	if (!baseId || !apiKey) {
-	  throw new Error("[MainContent] Missing Airtable credentials for reorder update");
+	  throw new Error(
+		"[MainContent] Missing Airtable credentials for reorder update"
+	  );
 	}
 
 	// chunk them so we don't exceed 10 records at once
@@ -225,7 +227,11 @@ function MainContent({ airtableUser }) {
 	}
 
 	try {
-	  console.log("[MainContent] Creating new Idea =>", newIdeaTitle, newIdeaSummary);
+	  console.log(
+		"[MainContent] Creating new Idea =>",
+		newIdeaTitle,
+		newIdeaSummary
+	  );
 
 	  // 1) Shift all existing ideas' Order by +1
 	  const shifted = ideas.map((idea) => ({
@@ -241,7 +247,9 @@ function MainContent({ airtableUser }) {
 	  }
 
 	  // 2) Create the new idea with Order=1
-	  console.log("[MainContent] Creating new idea record in Airtable with order=1...");
+	  console.log(
+		"[MainContent] Creating new idea record in Airtable with order=1..."
+	  );
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "POST",
 		headers: {
@@ -271,7 +279,10 @@ function MainContent({ airtableUser }) {
 
 	  const data = await resp.json();
 	  const createdRecord = data.records[0];
-	  console.log("[MainContent] New idea created in Airtable =>", createdRecord);
+	  console.log(
+		"[MainContent] New idea created in Airtable =>",
+		createdRecord
+	  );
 
 	  // 3) Prepend the new idea in local state
 	  setIdeas([createdRecord, ...shifted]);
@@ -286,9 +297,29 @@ function MainContent({ airtableUser }) {
   };
 
   // --------------------------------------------------------------------------
-  // 6) "Delete" idea logic => replaced by typing 'xxx' in title (IdeaItem)
-  //    If you still have separate code for delete, remove or repurpose it.
+  // 6) Delete an idea by “xxx” rename
+  //    We'll define the "handleDeleteIdea" function here.
   // --------------------------------------------------------------------------
+  async function handleDeleteIdea(idea) {
+	// 1) Remove from local state
+	setIdeas((prevIdeas) => prevIdeas.filter((i) => i.id !== idea.id));
+
+	// 2) Optionally also delete from Airtable
+	try {
+	  console.log("[MainContent] Deleting idea from Airtable =>", idea.id);
+	  await fetch(`https://api.airtable.com/v0/${baseId}/Ideas/${idea.id}`, {
+		method: "DELETE",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		},
+	  });
+	  // if success, no further action
+	} catch (err) {
+	  console.error("Failed to delete idea from Airtable:", err);
+	  // Optionally, revert local deletion
+	  // setIdeas((prev) => [...prev, idea]);
+	}
+  }
 
   // --------------------------------------------------------------------------
   // 7) Create a new Task => store the custom IdeaID & UserID
@@ -381,23 +412,26 @@ function MainContent({ airtableUser }) {
 		"[MainContent] Patching MilestoneID to Airtable => task:",
 		activeTaskForMilestone.id
 	  );
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: activeTaskForMilestone.id,
-			  fields: {
-				MilestoneID: milestone.id,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: activeTaskForMilestone.id,
+				fields: {
+				  MilestoneID: milestone.id,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `[MainContent] Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -491,9 +525,14 @@ function MainContent({ airtableUser }) {
 		hoveredIdeaId={hoveredIdeaId}
 		setHoveredIdeaId={setHoveredIdeaId}
 		deleteConfirm={deleteConfirm}
-		handleDeleteClick={() => { /* not used now, since we do "xxx" delete */}}
+		handleDeleteClick={() => {
+		  /* not used now, since we do "xxx" delete */
+		}}
 		onCreateTask={createTask}
 		onPickMilestone={handlePickMilestone}
+
+		// Pass the new onDeleteIdea prop:
+		onDeleteIdea={handleDeleteIdea}
 	  />
 	</div>
   );
