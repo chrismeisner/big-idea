@@ -5,21 +5,14 @@ import { useNavigate } from "react-router-dom";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 import Sortable from "sortablejs";
 
-/**
- * IdeaItem
- *
- * We’ve ADDED a reorder dropdown at the top-right. 
- * Everything else is your existing code for tasks, etc.
- */
-
 function IdeaItem({
   idea,
   ideaTasks,
   onDeleteIdea,
   onTaskCreate,
-  position,     // the current 1-based position of this idea
-  totalIdeas,   // how many ideas in total
-  onReorder,    // function to reorder
+  position,
+  totalIdeas,
+  onReorder,
 }) {
   const navigate = useNavigate();
   const { IdeaID, IdeaTitle, IdeaSummary } = idea.fields;
@@ -143,7 +136,7 @@ function IdeaItem({
 	// Optionally PATCH the new .Order for tasks to Airtable...
   }
 
-  // Inline editing tasks
+  // ---------- Inline editing tasks ----------
   function startEditingTask(task) {
 	setEditingTaskId(task.id);
 	let name = task.fields.TaskName || "";
@@ -200,7 +193,6 @@ function IdeaItem({
 	onReorder(idea, newPos);
   };
 
-  // ---------- Render ----------
   return (
 	<li className="p-4 hover:bg-gray-50 transition">
 	  {/* ROW => Top bar with (Title & Summary) + Reorder dropdown */}
@@ -220,7 +212,7 @@ function IdeaItem({
 			  />
 			) : (
 			  <h3
-				className="text-base font-bold cursor-pointer"
+				className="text-base font-bold text-blue-600 underline cursor-pointer hover:no-underline"
 				onClick={goToIdeaDetail}
 			  >
 				{IdeaTitle}
@@ -229,7 +221,7 @@ function IdeaItem({
 			{!isEditingTitle && (
 			  <span
 				className="ml-2 text-xs text-blue-600 underline cursor-pointer
-				  invisible group-hover:visible"
+				  invisible group-hover:visible hover:no-underline"
 				onClick={startEditingTitle}
 			  >
 				Edit
@@ -338,9 +330,9 @@ function IdeaItem({
 					)}
 				  </div>
 
-				  {/* Subtasks */}
+				  {/* Subtasks => now with bullets */}
 				  {childSubs.length > 0 && (
-					<ul className="ml-4 mt-1 list-none pl-0">
+					<ul className="ml-6 mt-1 list-disc list-inside">
 					  {childSubs.map((sub) => {
 						const isEditingSub = editingTaskId === sub.id;
 						return (
@@ -366,7 +358,8 @@ function IdeaItem({
 								className="cursor-pointer mr-2"
 								onClick={() => startEditingTask(sub)}
 							  >
-								{sub.fields.TaskName || "(Untitled Subtask)"}
+								{sub.fields.TaskName ||
+								  "(Untitled Subtask)"}
 							  </span>
 							)}
 						  </li>

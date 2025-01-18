@@ -277,6 +277,7 @@ function MainContent({ airtableUser }) {
 	  <form
 		onSubmit={handleCreateIdea}
 		className="mb-6 p-4 border rounded bg-gray-100"
+		autoComplete="off"  // <-- Disable autofill at the form level
 	  >
 		<div className="mb-4">
 		  <label
@@ -293,6 +294,7 @@ function MainContent({ airtableUser }) {
 			value={newIdeaTitle}
 			onChange={(e) => setNewIdeaTitle(e.target.value)}
 			required
+			autoComplete="off"  // <-- Also disable autofill on this input
 		  />
 		</div>
 
