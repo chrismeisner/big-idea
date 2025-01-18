@@ -1,52 +1,37 @@
 // File: /src/IdeaList.js
+
 import React from "react";
 import IdeaItem from "./IdeaItem";
 
-/**
- * IdeaList
- * 
- * Removed all milestone references.
- */
 function IdeaList({
   ideas,
   tasks,
-  ideasListRef,
-  hoveredIdeaId,
-  setHoveredIdeaId,
-  deleteConfirm,
-  handleDeleteClick,
-  onCreateTask,
   onDeleteIdea,
+  onCreateTask,
+  onReorderIdea, // <- new prop to handle reorder
 }) {
-  if (ideas.length === 0) {
-	return <p>No ideas found for your account.</p>;
+  if (!ideas || ideas.length === 0) {
+	return <p>No ideas found.</p>;
   }
 
+  // We'll pass the relevant tasks for each idea, plus its “position” (index+1).
   return (
-	<ul ref={ideasListRef} className="divide-y divide-gray-200 border rounded">
-	  {ideas.map((idea) => {
+	<ul className="divide-y divide-gray-200 border rounded">
+	  {ideas.map((idea, index) => {
 		const ideaCustomId = idea.fields.IdeaID;
-		// Filter tasks for this Idea
-		const ideaTasks = tasks.filter(
-		  (task) => task.fields.IdeaID === ideaCustomId
-		);
-
-		const isHovered = hoveredIdeaId === idea.id;
-		const isConfirming = deleteConfirm[idea.id];
+		// filter tasks for this idea
+		const ideaTasks = tasks.filter((t) => t.fields.IdeaID === ideaCustomId);
 
 		return (
 		  <IdeaItem
 			key={idea.id}
 			idea={idea}
 			ideaTasks={ideaTasks}
-			isHovered={isHovered}
-			isConfirming={isConfirming}
-			onHoverEnter={() => setHoveredIdeaId(idea.id)}
-			onHoverLeave={() => setHoveredIdeaId(null)}
-			onDeleteClick={() => handleDeleteClick(idea.id)}
-			onTaskCreate={(taskName) => onCreateTask(ideaCustomId, taskName)}
-			// Removed onPickMilestone & allMilestones
 			onDeleteIdea={onDeleteIdea}
+			onTaskCreate={(taskName) => onCreateTask(ideaCustomId, taskName)}
+			position={index + 1}       // 1-based position
+			totalIdeas={ideas.length}  // total count
+			onReorder={onReorderIdea}  // pass reorder handler
 		  />
 		);
 	  })}

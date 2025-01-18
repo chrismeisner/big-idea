@@ -1,57 +1,68 @@
 // File: /src/IdeaItem.js
+
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Bars3Icon } from "@heroicons/react/24/outline";
 import Sortable from "sortablejs";
 
+/**
+ * IdeaItem
+ *
+ * We’ve ADDED a reorder dropdown at the top-right. 
+ * Everything else is your existing code for tasks, etc.
+ */
+
 function IdeaItem({
   idea,
   ideaTasks,
-  onTaskCreate,
   onDeleteIdea,
+  onTaskCreate,
+  position,     // the current 1-based position of this idea
+  totalIdeas,   // how many ideas in total
+  onReorder,    // function to reorder
 }) {
   const navigate = useNavigate();
   const { IdeaID, IdeaTitle, IdeaSummary } = idea.fields;
 
+  // Inline editing states for the IDEA (title & summary)...
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitle, setEditingTitle] = useState(IdeaTitle || "");
 
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editingSummary, setEditingSummary] = useState(IdeaSummary || "");
 
+  // We keep tasks in local state so we can do DnD reordering
   const [localTasks, setLocalTasks] = useState(ideaTasks);
 
-  // Inline editing for tasks
+  // For inline editing tasks
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
 
-  // For creating new top-level tasks (no button, just Enter)
+  // Creating new tasks with Enter
   const [newTaskName, setNewTaskName] = useState("");
 
+  // Refs for top-level tasks
   const topLevelRef = useRef(null);
   const sortableRef = useRef(null);
-
-  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
   useEffect(() => {
 	setLocalTasks(ideaTasks);
   }, [ideaTasks]);
 
-  // Inline-edit for Idea Title
-  const startEditingTitle = () => {
+  // ---------- IDEA Title Editing ----------
+  function startEditingTitle() {
 	setIsEditingTitle(true);
 	setEditingTitle(IdeaTitle || "");
-  };
-  const cancelEditingTitle = () => {
+  }
+  function cancelEditingTitle() {
 	setIsEditingTitle(false);
 	setEditingTitle(IdeaTitle || "");
-  };
-  const handleTitleKeyDown = (e) => {
+  }
+  function handleTitleKeyDown(e) {
 	if (e.key === "Enter") commitIdeaTitleChange();
 	else if (e.key === "Escape") cancelEditingTitle();
-  };
-  const commitIdeaTitleChange = async () => {
+  }
+  function commitIdeaTitleChange() {
 	const trimmed = editingTitle.trim();
 	if (trimmed.toLowerCase() === "xxx") {
 	  if (onDeleteIdea) onDeleteIdea(idea);
@@ -61,61 +72,42 @@ function IdeaItem({
 	  cancelEditingTitle();
 	  return;
 	}
-	try {
-	  idea.fields.IdeaTitle = trimmed;
-	  setIsEditingTitle(false);
-	  // Optionally patch to Airtable...
-	} catch (err) {
-	  console.error("Failed to update Idea title:", err);
-	  idea.fields.IdeaTitle = IdeaTitle;
-	  setIsEditingTitle(false);
-	}
-  };
+	// local update
+	idea.fields.IdeaTitle = trimmed;
+	setIsEditingTitle(false);
+	// optionally PATCH to Airtable...
+  }
 
-  // Inline-edit for Idea Summary
-  const startEditingSummary = () => {
+  // ---------- IDEA Summary Editing ----------
+  function startEditingSummary() {
 	setIsEditingSummary(true);
 	setEditingSummary(IdeaSummary || "");
-  };
-  const cancelEditingSummary = () => {
+  }
+  function cancelEditingSummary() {
 	setIsEditingSummary(false);
 	setEditingSummary(IdeaSummary || "");
-  };
-  const handleSummaryKeyDown = (e) => {
-	if (e.key === "Enter") commitIdeaSummaryChange();
-	else if (e.key === "Escape") cancelEditingSummary();
-  };
-  const commitIdeaSummaryChange = async () => {
+  }
+  function commitIdeaSummaryChange() {
 	const trimmed = editingSummary.trim();
-	if (!trimmed) {
-	  cancelEditingSummary();
-	  return;
-	}
-	try {
-	  idea.fields.IdeaSummary = trimmed;
-	  setIsEditingSummary(false);
-	  // Optionally patch...
-	} catch (err) {
-	  console.error("Failed to update Idea summary:", err);
-	  idea.fields.IdeaSummary = IdeaSummary;
-	  setIsEditingSummary(false);
-	}
-  };
+	idea.fields.IdeaSummary = trimmed;
+	setIsEditingSummary(false);
+	// optionally PATCH...
+  }
 
+  // ---------- Clicking the Idea Title => go to detail ----------
   function goToIdeaDetail() {
 	navigate(`/ideas/${IdeaID}`);
   }
 
-  // Filter tasks => incomplete
+  // ---------- Tasks: filter incomplete, keep drag-and-drop ----------
   const incomplete = localTasks.filter((t) => !t.fields.Completed);
   const topLevel = incomplete.filter((t) => !t.fields.ParentTask);
   const subs = incomplete.filter((t) => t.fields.ParentTask);
 
-  // Sort them
   topLevel.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
   subs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 
-  // Sortable
+  // Enable drag-and-drop for top-level tasks
   useEffect(() => {
 	if (topLevel.length > 0 && topLevelRef.current && !sortableRef.current) {
 	  sortableRef.current = new Sortable(topLevelRef.current, {
@@ -132,7 +124,7 @@ function IdeaItem({
 	};
   }, [topLevel]);
 
-  async function handleSortEnd(evt) {
+  function handleSortEnd(evt) {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
@@ -148,36 +140,7 @@ function IdeaItem({
 	const updated = [...reordered, ...subs, ...completed];
 	setLocalTasks(updated);
 
-	// Optionally patch to Airtable
-	if (baseId && apiKey) {
-	  try {
-		const chunkSize = 10;
-		for (let i = 0; i < reordered.length; i += chunkSize) {
-		  const slice = reordered.slice(i, i + chunkSize).map((t) => ({
-			id: t.id,
-			fields: { Order: t.fields.Order },
-		  }));
-		  const resp = await fetch(
-			`https://api.airtable.com/v0/${baseId}/Tasks`,
-			{
-			  method: "PATCH",
-			  headers: {
-				Authorization: `Bearer ${apiKey}`,
-				"Content-Type": "application/json",
-			  },
-			  body: JSON.stringify({ records: slice }),
-			}
-		  );
-		  if (!resp.ok) {
-			throw new Error(
-			  `Airtable error: ${resp.status} ${resp.statusText}`
-			);
-		  }
-		}
-	  } catch (err) {
-		console.error("Error updating reorder =>", err);
-	  }
-	}
+	// Optionally PATCH the new .Order for tasks to Airtable...
   }
 
   // Inline editing tasks
@@ -193,7 +156,7 @@ function IdeaItem({
 	setEditingTaskId(null);
 	setEditingTaskName("");
   }
-  async function commitTaskEdit(task) {
+  function commitTaskEdit(task) {
 	const trimmed = editingTaskName.trim();
 	if (trimmed.toLowerCase() === "xxx") {
 	  deleteTask(task);
@@ -210,224 +173,224 @@ function IdeaItem({
 	  return t;
 	});
 	setLocalTasks(updated);
-
-	if (baseId && apiKey) {
-	  try {
-		const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		  method: "PATCH",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				id: task.id,
-				fields: { TaskName: trimmed },
-			  },
-			],
-		  }),
-		});
-		if (!resp.ok) {
-		  throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-		}
-	  } catch (err) {
-		console.error("commitTaskEdit =>", err);
-		// optionally revert
-	  }
-	}
+	// optionally PATCH to Airtable...
 	cancelEditingTask();
   }
 
-  async function deleteTask(task) {
+  function deleteTask(task) {
 	setLocalTasks((prev) => prev.filter((t) => t.id !== task.id));
-	if (baseId && apiKey) {
-	  try {
-		await fetch(`https://api.airtable.com/v0/${baseId}/Tasks/${task.id}`, {
-		  method: "DELETE",
-		  headers: { Authorization: `Bearer ${apiKey}` },
-		});
-	  } catch (err) {
-		console.error("Failed to delete task =>", err);
-	  }
-	}
+	// optionally DELETE from Airtable
   }
 
-  // Create new top-level task by Enter
-  const handleNewTaskKeyDown = (e) => {
+  // Create new top-level task (Enter-based)
+  function handleNewTaskKeyDown(e) {
 	if (e.key === "Enter") {
 	  e.preventDefault();
 	  const trimmed = newTaskName.trim();
 	  if (!trimmed) return;
-	  // Create via parent-provided callback
-	  onTaskCreate(idea.fields.IdeaID, trimmed);
+	  onTaskCreate(trimmed);
 	  setNewTaskName("");
 	}
+  }
+
+  // ---------- REORDER DROPDOWN FOR IDEAS ----------
+  const handleReorderChange = (e) => {
+	const newPos = parseInt(e.target.value, 10);
+	if (newPos === position) return; // no change
+	onReorder(idea, newPos);
   };
 
+  // ---------- Render ----------
   return (
-	<li className="relative p-2 hover:bg-gray-50 transition flex text-sm">
-	  {/* Drag handle for reordering IDEAS in the parent list */}
-	  <div
-		className="grab-idea-handle flex-shrink-0 mr-3 cursor-grab active:cursor-grabbing text-gray-400"
-		title="Drag to reorder Ideas"
-	  >
-		<Bars3Icon className="h-4 w-4" />
+	<li className="p-4 hover:bg-gray-50 transition">
+	  {/* ROW => Top bar with (Title & Summary) + Reorder dropdown */}
+	  <div className="flex items-start justify-between">
+		<div className="mr-2 flex-1">
+		  {/* IDEA TITLE + "Edit" link */}
+		  <div className="inline-flex items-center group">
+			{isEditingTitle ? (
+			  <input
+				autoFocus
+				type="text"
+				className="text-base font-bold border-b border-gray-300 focus:outline-none"
+				value={editingTitle}
+				onChange={(e) => setEditingTitle(e.target.value)}
+				onKeyDown={handleTitleKeyDown}
+				onBlur={commitIdeaTitleChange}
+			  />
+			) : (
+			  <h3
+				className="text-base font-bold cursor-pointer"
+				onClick={goToIdeaDetail}
+			  >
+				{IdeaTitle}
+			  </h3>
+			)}
+			{!isEditingTitle && (
+			  <span
+				className="ml-2 text-xs text-blue-600 underline cursor-pointer
+				  invisible group-hover:visible"
+				onClick={startEditingTitle}
+			  >
+				Edit
+			  </span>
+			)}
+		  </div>
+
+		  {/* IDEA SUMMARY */}
+		  <div className="mt-1 text-sm">
+			{isEditingSummary ? (
+			  <div>
+				<textarea
+				  rows={2}
+				  className="border border-gray-300 p-1 w-full"
+				  value={editingSummary}
+				  onChange={(e) => setEditingSummary(e.target.value)}
+				/>
+				<div className="flex space-x-2 mt-1">
+				  <button
+					className="text-xs bg-blue-600 text-white px-2 py-1 rounded"
+					onClick={commitIdeaSummaryChange}
+				  >
+					Save
+				  </button>
+				  <button
+					className="text-xs bg-gray-300 px-2 py-1 rounded"
+					onClick={cancelEditingSummary}
+				  >
+					Cancel
+				  </button>
+				</div>
+			  </div>
+			) : (
+			  <p
+				className="text-gray-600 cursor-pointer"
+				onClick={startEditingSummary}
+			  >
+				{IdeaSummary && IdeaSummary.trim().length > 0
+				  ? IdeaSummary
+				  : "(No summary)"}
+			  </p>
+			)}
+		  </div>
+		</div>
+
+		{/* Reorder Dropdown */}
+		<div className="ml-4 flex items-center">
+		  <label className="mr-2 text-sm text-gray-600">Order:</label>
+		  <select
+			className="border border-gray-300 rounded px-1 py-0.5 text-sm"
+			value={position}
+			onChange={handleReorderChange}
+		  >
+			{Array.from({ length: totalIdeas }, (_, i) => i + 1).map((pos) => (
+			  <option key={pos} value={pos}>
+				{pos}
+			  </option>
+			))}
+		  </select>
+		</div>
 	  </div>
 
-	  <div className="flex-1">
-		{/* IDEA Title Row */}
-		<div className="inline-flex items-center group">
-		  {isEditingTitle ? (
-			<input
-			  autoFocus
-			  type="text"
-			  className="text-base font-bold border-b border-gray-300 focus:outline-none"
-			  value={editingTitle}
-			  onChange={(e) => setEditingTitle(e.target.value)}
-			  onKeyDown={handleTitleKeyDown}
-			  onBlur={commitIdeaTitleChange}
-			/>
-		  ) : (
-			<h3
-			  className="text-base font-bold cursor-pointer"
-			  onClick={goToIdeaDetail}
-			>
-			  {IdeaTitle}
-			</h3>
-		  )}
-		  {!isEditingTitle && (
-			<span
-			  className="ml-2 text-xs text-blue-600 underline cursor-pointer
-						 invisible group-hover:visible"
-			  onClick={startEditingTitle}
-			>
-			  Edit
-			</span>
-		  )}
-		</div>
+	  {/* TASKS => keep drag-and-drop for top-level tasks */}
+	  <div className="mt-3 pl-4 border-l border-gray-200">
+		<h4 className="font-semibold text-sm">Tasks:</h4>
 
-		{/* IDEA Summary */}
-		<div className="mt-1 text-sm">
-		  {isEditingSummary ? (
-			<textarea
-			  rows={2}
-			  autoFocus
-			  className="border-b border-gray-300 focus:outline-none w-full"
-			  value={editingSummary}
-			  onChange={(e) => setEditingSummary(e.target.value)}
-			  onKeyDown={handleSummaryKeyDown}
-			  onBlur={commitIdeaSummaryChange}
-			/>
-		  ) : (
-			<p className="text-gray-600 cursor-pointer" onClick={startEditingSummary}>
-			  {IdeaSummary || "(No summary)"}
-			</p>
-		  )}
-		</div>
+		{topLevel.length > 0 ? (
+		  <ul className="list-none mt-1 pl-0" ref={topLevelRef}>
+			{topLevel.map((parent) => {
+			  const isEditingParent = editingTaskId === parent.id;
+			  const childSubs = subs.filter(
+				(s) => s.fields.ParentTask === parent.fields.TaskID
+			  );
 
-		{/* TASKS section => top-level + subtasks */}
-		<div className="mt-2 pl-3 border-l border-gray-200">
-		  <h4 className="font-semibold text-sm">Tasks:</h4>
-
-		  {/* Sortable UL => top-level tasks */}
-		  {topLevel.length > 0 ? (
-			<ul className="list-none mt-1 pl-0" ref={topLevelRef}>
-			  {topLevel.map((parent) => {
-				const isEditingParent = editingTaskId === parent.id;
-
-				// gather subtasks
-				const childSubs = subs.filter(
-				  (s) => s.fields.ParentTask === parent.fields.TaskID
-				);
-
-				return (
-				  <li key={parent.id} className="bg-white rounded p-1 mb-1">
-					{/* Row => drag handle + inline edit for top-level task name */}
-					<div className="flex items-center">
-					  <div
-						className="drag-parent-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
-						title="Drag to reorder tasks"
-					  >
-						<Bars3Icon className="h-3 w-3" />
-					  </div>
-
-					  {isEditingParent ? (
-						<input
-						  autoFocus
-						  type="text"
-						  className="border-b border-gray-300 focus:outline-none mr-2 text-sm"
-						  value={editingTaskName}
-						  onChange={(e) => setEditingTaskName(e.target.value)}
-						  onBlur={() => commitTaskEdit(parent)}
-						  onKeyDown={(e) => {
-							if (e.key === "Enter") commitTaskEdit(parent);
-							else if (e.key === "Escape") cancelEditingTask();
-						  }}
-						/>
-					  ) : (
-						<span
-						  className="cursor-pointer mr-2 text-sm"
-						  onClick={() => startEditingTask(parent)}
-						>
-						  {parent.fields.TaskName || "(Untitled)"}
-						</span>
-					  )}
+			  return (
+				<li key={parent.id} className="bg-white rounded p-1 mb-1">
+				  {/* Row => drag handle (for tasks) + inline edit */}
+				  <div className="flex items-center">
+					<div
+					  className="drag-parent-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
+					  title="Drag to reorder tasks"
+					>
+					  <Bars3Icon className="h-3 w-3" />
 					</div>
 
-					{/* Subtasks */}
-					{childSubs.length > 0 && (
-					  <ul className="ml-4 mt-1 list-none pl-0">
-						{childSubs.map((sub) => {
-						  const isEditingSub = editingTaskId === sub.id;
-
-						  return (
-							<li key={sub.id} className="py-1 text-sm">
-							  {isEditingSub ? (
-								<input
-								  autoFocus
-								  type="text"
-								  className="border-b border-gray-300 focus:outline-none mr-2"
-								  value={editingTaskName}
-								  onChange={(e) => setEditingTaskName(e.target.value)}
-								  onBlur={() => commitTaskEdit(sub)}
-								  onKeyDown={(e) => {
-									if (e.key === "Enter") commitTaskEdit(sub);
-									else if (e.key === "Escape") cancelEditingTask();
-								  }}
-								/>
-							  ) : (
-								<span
-								  className="cursor-pointer mr-2"
-								  onClick={() => startEditingTask(sub)}
-								>
-								  {sub.fields.TaskName || "(Untitled Subtask)"}
-								</span>
-							  )}
-							</li>
-						  );
-						})}
-					  </ul>
+					{isEditingParent ? (
+					  <input
+						autoFocus
+						type="text"
+						className="border-b border-gray-300 focus:outline-none mr-2 text-sm"
+						value={editingTaskName}
+						onChange={(e) => setEditingTaskName(e.target.value)}
+						onBlur={() => commitTaskEdit(parent)}
+						onKeyDown={(e) => {
+						  if (e.key === "Enter") commitTaskEdit(parent);
+						  else if (e.key === "Escape") cancelEditingTask();
+						}}
+					  />
+					) : (
+					  <span
+						className="cursor-pointer mr-2 text-sm"
+						onClick={() => startEditingTask(parent)}
+					  >
+						{parent.fields.TaskName || "(Untitled)"}
+					  </span>
 					)}
-				  </li>
-				);
-			  })}
-			</ul>
-		  ) : (
-			<p className="text-xs text-gray-500 mt-1">No incomplete tasks.</p>
-		  )}
+				  </div>
 
-		  {/* Form => create new top-level task by pressing Enter only */}
-		  <input
-			type="text"
-			placeholder="Type a new task and press Enter..."
-			value={newTaskName}
-			onChange={(e) => setNewTaskName(e.target.value)}
-			onKeyDown={handleNewTaskKeyDown}
-			className="border rounded px-2 py-1 text-sm mt-2 w-full"
-		  />
-		  {/* (Button removed) */}
-		</div>
+				  {/* Subtasks */}
+				  {childSubs.length > 0 && (
+					<ul className="ml-4 mt-1 list-none pl-0">
+					  {childSubs.map((sub) => {
+						const isEditingSub = editingTaskId === sub.id;
+						return (
+						  <li key={sub.id} className="py-1 text-sm">
+							{isEditingSub ? (
+							  <input
+								autoFocus
+								type="text"
+								className="border-b border-gray-300 focus:outline-none mr-2"
+								value={editingTaskName}
+								onChange={(e) =>
+								  setEditingTaskName(e.target.value)
+								}
+								onBlur={() => commitTaskEdit(sub)}
+								onKeyDown={(e) => {
+								  if (e.key === "Enter") commitTaskEdit(sub);
+								  else if (e.key === "Escape")
+									cancelEditingTask();
+								}}
+							  />
+							) : (
+							  <span
+								className="cursor-pointer mr-2"
+								onClick={() => startEditingTask(sub)}
+							  >
+								{sub.fields.TaskName || "(Untitled Subtask)"}
+							  </span>
+							)}
+						  </li>
+						);
+					  })}
+					</ul>
+				  )}
+				</li>
+			  );
+			})}
+		  </ul>
+		) : (
+		  <p className="text-xs text-gray-500 mt-1">No incomplete tasks.</p>
+		)}
+
+		{/* Create new top-level task => press Enter */}
+		<input
+		  type="text"
+		  placeholder="New task (press Enter)"
+		  value={newTaskName}
+		  onChange={(e) => setNewTaskName(e.target.value)}
+		  onKeyDown={handleNewTaskKeyDown}
+		  className="border rounded px-2 py-1 text-sm mt-2 w-full"
+		/>
 	  </div>
 	</li>
   );

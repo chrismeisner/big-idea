@@ -1,6 +1,6 @@
 // File: /src/MainContent.js
-import React, { useEffect, useState, useRef } from "react";
-import Sortable from "sortablejs";
+
+import React, { useEffect, useState } from "react";
 import IdeaList from "./IdeaList";
 
 function MainContent({ airtableUser }) {
@@ -9,17 +9,14 @@ function MainContent({ airtableUser }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // For creating new ideas
   const [newIdeaTitle, setNewIdeaTitle] = useState("");
-  const [newIdeaSummary, setNewIdeaSummary] = useState(""); // optional now
-
-  const [hoveredIdeaId, setHoveredIdeaId] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState({});
-
-  const ideasListRef = useRef(null);
-  const sortableRef = useRef(null);
+  const [newIdeaSummary, setNewIdeaSummary] = useState("");
 
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+
+  // Get userId
   const userId = airtableUser?.fields?.UserID || null;
 
   useEffect(() => {
@@ -39,11 +36,11 @@ function MainContent({ airtableUser }) {
 		setLoading(true);
 		setError(null);
 
-		// Fetch Ideas
+		// A) Fetch Ideas => order by "Order"
 		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
+		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 		ideasUrl.searchParams.set("sort[0][field]", "Order");
 		ideasUrl.searchParams.set("sort[0][direction]", "asc");
-		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
 		const ideasResp = await fetch(ideasUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
@@ -56,9 +53,10 @@ function MainContent({ airtableUser }) {
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
 
-		// Fetch Tasks
+		// B) Fetch Tasks => filter by userId
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
+
 		const tasksResp = await fetch(tasksUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
@@ -69,9 +67,8 @@ function MainContent({ airtableUser }) {
 		}
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
-
 	  } catch (err) {
-		console.error("[MainContent] fetchData =>", err);
+		console.error("[MainContent] Error fetching data:", err);
 		setError("Failed to fetch data. Please try again later.");
 	  } finally {
 		setLoading(false);
@@ -81,79 +78,11 @@ function MainContent({ airtableUser }) {
 	fetchData();
   }, [userId, baseId, apiKey]);
 
-  // Initialize Sortable
-  useEffect(() => {
-	if (!loading && ideas.length > 0 && ideasListRef.current && !sortableRef.current) {
-	  sortableRef.current = new Sortable(ideasListRef.current, {
-		animation: 150,
-		handle: ".grab-idea-handle",
-		onEnd: handleSortEnd,
-	  });
-	}
-  }, [loading, ideas]);
-
-  useEffect(() => {
-	return () => {
-	  if (sortableRef.current) {
-		sortableRef.current.destroy();
-		sortableRef.current = null;
-	  }
-	};
-  }, []);
-
-  const handleSortEnd = async (evt) => {
-	const { oldIndex, newIndex } = evt;
-	if (oldIndex === newIndex) return;
-
-	const updated = [...ideas];
-	const [movedItem] = updated.splice(oldIndex, 1);
-	updated.splice(newIndex, 0, movedItem);
-
-	const reordered = updated.map((idea, i) => ({
-	  ...idea,
-	  fields: {
-		...idea.fields,
-		Order: i + 1,
-	  },
-	}));
-	setIdeas(reordered);
-
-	try {
-	  await updateIdeasOrderInAirtable(reordered);
-	} catch (err) {
-	  console.error("Error reordering ideas =>", err);
-	  setError("Failed to reorder ideas. Please try again later.");
-	}
-  };
-
-  async function updateIdeasOrderInAirtable(list) {
-	if (!baseId || !apiKey) {
-	  throw new Error("Missing Airtable credentials for reorder update");
-	}
-	const chunkSize = 10;
-	for (let i = 0; i < list.length; i += chunkSize) {
-	  const chunk = list.slice(i, i + chunkSize).map((idea) => ({
-		id: idea.id,
-		fields: { Order: idea.fields.Order },
-	  }));
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({ records: chunk }),
-	  });
-	  if (!resp.ok) {
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	  }
-	}
-  }
-
-  const handleCreateIdea = async (e) => {
+  // --------------------------------------------------------------------------
+  // Create a new Idea => just POST with your fields
+  // --------------------------------------------------------------------------
+  async function handleCreateIdea(e) {
 	e.preventDefault();
-	setError(null);
-
 	if (!newIdeaTitle.trim()) return;
 	if (!userId) {
 	  setError("No user ID. Please log in again.");
@@ -165,19 +94,7 @@ function MainContent({ airtableUser }) {
 	}
 
 	try {
-	  // Shift existing ideas' Order by +1
-	  const shifted = ideas.map((idea) => ({
-		...idea,
-		fields: {
-		  ...idea.fields,
-		  Order: (idea.fields.Order || 0) + 1,
-		},
-	  }));
-	  if (shifted.length > 0) {
-		await updateIdeasOrderInAirtable(shifted);
-	  }
-
-	  // Create new idea with Order=1
+	  // POST a new idea
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "POST",
 		headers: {
@@ -189,10 +106,9 @@ function MainContent({ airtableUser }) {
 			{
 			  fields: {
 				IdeaTitle: newIdeaTitle,
-				IdeaSummary: newIdeaSummary, // optional
-				UserMobile: airtableUser.fields.Mobile,
+				IdeaSummary: newIdeaSummary,
+				UserMobile: airtableUser.fields.Mobile || "",
 				UserID: userId,
-				Order: 1,
 			  },
 			},
 		  ],
@@ -204,19 +120,23 @@ function MainContent({ airtableUser }) {
 		console.error("[MainContent] create idea error:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
-
 	  const data = await resp.json();
 	  const createdRecord = data.records[0];
 
-	  setIdeas([createdRecord, ...shifted]);
-	  setNewIdeaTitle("");
-	  setNewIdeaSummary(""); // clear
-	} catch (err) {
-	  console.error("Error creating idea:", err);
-	  setError("Failed to create idea. Please try again later.");
-	}
-  };
+	  // local
+	  setIdeas((prev) => [...prev, createdRecord]);
 
+	  setNewIdeaTitle("");
+	  setNewIdeaSummary("");
+	} catch (err) {
+	  console.error("Error creating idea =>", err);
+	  setError("Failed to create idea. Please try again.");
+	}
+  }
+
+  // --------------------------------------------------------------------------
+  // Delete Idea
+  // --------------------------------------------------------------------------
   async function handleDeleteIdea(idea) {
 	setIdeas((prev) => prev.filter((i) => i.id !== idea.id));
 	try {
@@ -225,11 +145,15 @@ function MainContent({ airtableUser }) {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	  });
 	} catch (err) {
-	  console.error("Failed to delete idea from Airtable:", err);
+	  console.error("Failed to delete idea =>", err);
+	  // optionally revert
 	}
   }
 
-  const createTask = async (ideaCustomId, taskName) => {
+  // --------------------------------------------------------------------------
+  // Create a new Task => same logic as before
+  // --------------------------------------------------------------------------
+  async function createTask(ideaCustomId, taskName) {
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
@@ -251,7 +175,6 @@ function MainContent({ airtableUser }) {
 				UserID: userId,
 				Order: orderValue,
 				Completed: false,
-				CompletedTime: null,
 			  },
 			},
 		  ],
@@ -266,17 +189,85 @@ function MainContent({ airtableUser }) {
 	  const data = await resp.json();
 	  setTasks((prev) => [...prev, data.records[0]]);
 	} catch (err) {
-	  console.error("Error creating task:", err);
+	  console.error("Error creating task =>", err);
 	  setError("Failed to create task. Please try again.");
 	}
-  };
+  }
 
+  // --------------------------------------------------------------------------
+  // Reorder Ideas => assign new Order field, patch to Airtable
+  // --------------------------------------------------------------------------
+  async function handleReorderIdea(targetIdea, newPosition) {
+	// 1) Make a copy of the ideas array, sorted by .Order ascending
+	const sorted = [...ideas].sort(
+	  (a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
+	);
+
+	// 2) Find the old index
+	const oldIndex = sorted.findIndex((i) => i.id === targetIdea.id);
+	if (oldIndex === -1) return;
+
+	// 3) Remove from array
+	const [removed] = sorted.splice(oldIndex, 1);
+
+	// 4) Insert at newPosition - 1
+	sorted.splice(newPosition - 1, 0, removed);
+
+	// 5) Reassign fields.Order = i+1
+	sorted.forEach((rec, i) => {
+	  rec.fields.Order = i + 1;
+	});
+
+	// 6) Update local state
+	setIdeas(sorted);
+
+	// 7) Patch new Orders to Airtable in chunks
+	try {
+	  const chunkSize = 10;
+	  for (let i = 0; i < sorted.length; i += chunkSize) {
+		const chunk = sorted.slice(i, i + chunkSize);
+		const records = chunk.map((r) => ({
+		  id: r.id,
+		  fields: { Order: r.fields.Order },
+		}));
+
+		const patchResp = await fetch(
+		  `https://api.airtable.com/v0/${baseId}/Ideas`,
+		  {
+			method: "PATCH",
+			headers: {
+			  Authorization: `Bearer ${apiKey}`,
+			  "Content-Type": "application/json",
+			},
+			body: JSON.stringify({ records }),
+		  }
+		);
+		if (!patchResp.ok) {
+		  throw new Error(
+			`Airtable patch error: ${patchResp.status} ${patchResp.statusText}`
+		  );
+		}
+	  }
+	} catch (err) {
+	  console.error("Error reordering ideas in Airtable:", err);
+	  // optionally revert local state if needed
+	}
+  }
+
+  // --------------------------------------------------------------------------
+  // Render
+  // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading your ideas...</p>;
   }
   if (error) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
+
+  // Sort ideas by .Order for display
+  const sortedIdeas = [...ideas].sort(
+	(a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
+  );
 
   return (
 	<div className="container py-6">
@@ -298,7 +289,7 @@ function MainContent({ airtableUser }) {
 			id="newIdeaTitle"
 			type="text"
 			className="border p-2 w-full text-sm"
-			placeholder="e.g. Revolutionize the coffee industry"
+			placeholder="e.g. Next big startup..."
 			value={newIdeaTitle}
 			onChange={(e) => setNewIdeaTitle(e.target.value)}
 			required
@@ -315,11 +306,10 @@ function MainContent({ airtableUser }) {
 		  <textarea
 			id="newIdeaSummary"
 			className="border p-2 w-full text-sm"
-			rows={4}
+			rows={3}
 			placeholder="(Brief description)"
 			value={newIdeaSummary}
 			onChange={(e) => setNewIdeaSummary(e.target.value)}
-			// removed "required"
 		  />
 		</div>
 
@@ -331,17 +321,13 @@ function MainContent({ airtableUser }) {
 		</button>
 	  </form>
 
-	  {/* Idea List */}
+	  {/* Idea List => passing onReorderIdea */}
 	  <IdeaList
-		ideas={ideas}
+		ideas={sortedIdeas}
 		tasks={tasks}
-		ideasListRef={ideasListRef}
-		hoveredIdeaId={hoveredIdeaId}
-		setHoveredIdeaId={setHoveredIdeaId}
-		deleteConfirm={deleteConfirm}
-		handleDeleteClick={() => {}}
-		onCreateTask={createTask}
 		onDeleteIdea={handleDeleteIdea}
+		onCreateTask={createTask}
+		onReorderIdea={handleReorderIdea}
 	  />
 	</div>
   );
