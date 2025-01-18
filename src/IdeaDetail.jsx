@@ -1,5 +1,3 @@
-// File: /src/IdeaDetail.jsx
-
 import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import Sortable from "sortablejs";
@@ -14,9 +12,15 @@ function IdeaDetail({ airtableUser }) {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Inline editing
+  // Inline editing for TaskName
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
+
+  // ----------------------------------------------
+  // NEW (NOTES EDIT): States for editing TaskNotes
+  // ----------------------------------------------
+  const [editingNotesTaskId, setEditingNotesTaskId] = useState(null);
+  const [editingNotesText, setEditingNotesText] = useState("");
 
   // Milestone modal
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
@@ -24,22 +28,16 @@ function IdeaDetail({ airtableUser }) {
 
   // Creating a new top-level task
   const [newTaskName, setNewTaskName] = useState("");
+  const [newTaskPosition, setNewTaskPosition] = useState("top"); // 'top' or 'bottom'
 
-  // NEW: Toggle for how new tasks are inserted: 'top' or 'bottom'
-  const [newTaskPosition, setNewTaskPosition] = useState("top");
-
-  // The userId from the Airtable user record
   const userId = airtableUser?.fields?.UserID || null;
-
   const { customIdeaId } = useParams();
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // Sortable ref for uncompleted top-level tasks
+  // Refs for sortable
   const topLevelListRef = useRef(null);
   const topLevelSortableRef = useRef(null);
-
-  // Refs for subtask lists => subtaskRefs.current[parentTaskID] = DOM <ul>
   const subtaskRefs = useRef({});
 
   // ------------------------------------------------------------------
@@ -65,7 +63,7 @@ function IdeaDetail({ airtableUser }) {
 	  setLoading(true);
 	  setError(null);
 
-	  // A) Fetch Idea by {IdeaID} = customIdeaId
+	  // A) Fetch the Idea
 	  const ideaResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas?filterByFormula={IdeaID}="${customIdeaId}"`,
 		{ headers: { Authorization: `Bearer ${apiKey}` } }
@@ -81,13 +79,12 @@ function IdeaDetail({ airtableUser }) {
 	  }
 	  setIdea(ideaData.records[0]);
 
-	  // B) Fetch Tasks => only tasks for {IdeaID}=customIdeaId and {UserID}=userId
+	  // B) Fetch tasks for this idea/user
 	  const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 	  tasksUrl.searchParams.set(
 		"filterByFormula",
 		`AND({IdeaID}="${customIdeaId}", {UserID}="${userId}")`
 	  );
-	  // Sort tasks by Order asc
 	  tasksUrl.searchParams.set("sort[0][field]", "Order");
 	  tasksUrl.searchParams.set("sort[0][direction]", "asc");
 
@@ -106,7 +103,7 @@ function IdeaDetail({ airtableUser }) {
 	  }));
 	  setTasks(mappedTasks);
 
-	  // C) Fetch all Milestones => optional filter by user
+	  // C) Fetch all Milestones (for user)
 	  const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
 	  msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 	  const msResp = await fetch(msUrl.toString(), {
@@ -129,25 +126,20 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 2) Auto-sort logic => uncompleted tasks at top, completed after
+  // 2) Sort helpers
   // ------------------------------------------------------------------
   function getSortedTopLevel() {
-	// top-level => tasks with no ParentTask
 	const top = tasks.filter((t) => !t.fields.ParentTask);
-	const incomplete = top.filter((t) => !t.fields.Completed);
-	const completed = top.filter((t) => t.fields.Completed);
+	const inc = top.filter((t) => !t.fields.Completed);
+	const comp = top.filter((t) => t.fields.Completed);
 
-	// incomplete => sort by .Order ascending
-	incomplete.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
-
-	// completed => sort by CompletedTime desc
-	completed.sort((a, b) => {
+	inc.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
+	comp.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
 	  const tB = b.fields.CompletedTime || "";
 	  return tB.localeCompare(tA);
 	});
-
-	return [...incomplete, ...completed];
+	return [...inc, ...comp];
   }
 
   function getSortedSubtasks(parentID) {
@@ -155,21 +147,17 @@ function IdeaDetail({ airtableUser }) {
 	const inc = subs.filter((s) => !s.fields.Completed);
 	const comp = subs.filter((s) => s.fields.Completed);
 
-	// uncompleted => sort by SubOrder ascending
 	inc.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
-
-	// completed => CompletedTime desc
 	comp.sort((a, b) => {
 	  const tA = a.fields.CompletedTime || "";
 	  const tB = b.fields.CompletedTime || "";
 	  return tB.localeCompare(tA);
 	});
-
 	return [...inc, ...comp];
   }
 
   // ------------------------------------------------------------------
-  // 3) Sortable for uncompleted top-level tasks
+  // 3) Sortable for top-level tasks
   // ------------------------------------------------------------------
   useEffect(() => {
 	if (!loading && tasks.length > 0 && topLevelListRef.current) {
@@ -193,20 +181,19 @@ function IdeaDetail({ airtableUser }) {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	// We'll reorder only uncompleted tasks
 	const top = tasks.filter((t) => !t.fields.ParentTask);
-	const incomplete = top.filter((t) => !t.fields.Completed);
-	const completed = top.filter((t) => t.fields.Completed);
+	const inc = top.filter((t) => !t.fields.Completed);
+	const comp = top.filter((t) => t.fields.Completed);
 
-	const updatedInc = [...incomplete];
-	const [movedItem] = updatedInc.splice(oldIndex, 1);
-	updatedInc.splice(newIndex, 0, movedItem);
+	const updatedInc = [...inc];
+	const [moved] = updatedInc.splice(oldIndex, 1);
+	updatedInc.splice(newIndex, 0, moved);
 
-	updatedInc.forEach((t, idx) => {
-	  t.fields.Order = idx + 1;
+	updatedInc.forEach((t, i) => {
+	  t.fields.Order = i + 1;
 	});
 
-	const mergedTop = [...updatedInc, ...completed];
+	const mergedTop = [...updatedInc, ...comp];
 	const subs = tasks.filter((t) => t.fields.ParentTask);
 	const newAll = [...mergedTop, ...subs];
 	setTasks(newAll);
@@ -222,22 +209,19 @@ function IdeaDetail({ airtableUser }) {
   async function patchOrderToAirtable(incompleteArr) {
 	if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 
-	// Chunk in groups of 10
 	const chunkSize = 10;
 	for (let i = 0; i < incompleteArr.length; i += chunkSize) {
-	  const chunk = incompleteArr.slice(i, i + chunkSize);
-	  const records = chunk.map((t) => ({
+	  const chunk = incompleteArr.slice(i, i + chunkSize).map((t) => ({
 		id: t.id,
 		fields: { Order: t.fields.Order },
 	  }));
-
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
 		  "Content-Type": "application/json",
 		},
-		body: JSON.stringify({ records }),
+		body: JSON.stringify({ records: chunk }),
 	  });
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
@@ -251,16 +235,17 @@ function IdeaDetail({ airtableUser }) {
   useLayoutEffect(() => {
 	if (!loading && tasks.length > 0) {
 	  const parentTasks = tasks.filter((t) => !t.fields.ParentTask);
+
 	  parentTasks.forEach((p) => {
 		const subListEl = subtaskRefs.current[p.id];
 		if (!subListEl) return;
 
-		// only reorder incomplete subtasks
 		const incompleteSubs = tasks.filter(
 		  (s) => s.fields.ParentTask === p.fields.TaskID && !s.fields.Completed
 		);
 		if (incompleteSubs.length === 0) return;
 
+		// destroy any old Sortable instance
 		if (subListEl._sortable) {
 		  subListEl._sortable.destroy();
 		}
@@ -288,15 +273,16 @@ function IdeaDetail({ airtableUser }) {
 
 	const incSubs = tasks.filter(
 	  (s) =>
-		s.fields.ParentTask === parentTask.fields.TaskID && !s.fields.Completed
+		s.fields.ParentTask === parentTask.fields.TaskID &&
+		!s.fields.Completed
 	);
 
 	const updatedSubs = [...incSubs];
 	const [movedItem] = updatedSubs.splice(oldIndex, 1);
 	updatedSubs.splice(newIndex, 0, movedItem);
 
-	updatedSubs.forEach((sub, idx) => {
-	  sub.fields.SubOrder = idx + 1;
+	updatedSubs.forEach((sub, i) => {
+	  sub.fields.SubOrder = i + 1;
 	});
 
 	const otherTasks = tasks.filter(
@@ -341,7 +327,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 4) Create new top-level Task => can insert at top or bottom
+  // 4) Create new top-level Task
   // ------------------------------------------------------------------
   async function handleCreateTopLevelTask(e) {
 	e.preventDefault();
@@ -358,15 +344,13 @@ function IdeaDetail({ airtableUser }) {
 	  if (newTaskPosition === "top") {
 		// SHIFT existing incomplete tasks by +1
 		if (incomplete.length > 0) {
-		  const shifted = incomplete.map((task) => {
-			return {
-			  ...task,
-			  fields: {
-				...task.fields,
-				Order: (task.fields.Order || 0) + 1,
-			  },
-			};
-		  });
+		  const shifted = incomplete.map((task) => ({
+			...task,
+			fields: {
+			  ...task.fields,
+			  Order: (task.fields.Order || 0) + 1,
+			},
+		  }));
 		  const completed = top.filter((t) => t.fields.Completed);
 		  const subs = tasks.filter((t) => t.fields.ParentTask);
 		  setTasks([...shifted, ...completed, ...subs]);
@@ -374,11 +358,9 @@ function IdeaDetail({ airtableUser }) {
 		}
 		newOrder = 1;
 	  } else {
-		// "bottom"
 		newOrder = incomplete.length + 1;
 	  }
 
-	  // Create new task record in Airtable
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -418,7 +400,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 5) Toggling Completed (deleted old #5 reference about "xxx" approach)
+  // 5) Toggle Completed
   // ------------------------------------------------------------------
   async function handleToggleCompleted(task) {
 	const wasCompleted = task.fields.Completed || false;
@@ -442,24 +424,27 @@ function IdeaDetail({ airtableUser }) {
 
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Completed: newValue,
-				CompletedTime: newTime,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Completed: newValue,
+				  CompletedTime: newTime,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[handleToggleCompleted] error:", airtableError);
@@ -491,7 +476,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 6) Inline Editing
+  // 6) Inline Editing for TaskName
   // ------------------------------------------------------------------
   function startEditingTask(task) {
 	setEditingTaskId(task.id);
@@ -510,8 +495,7 @@ function IdeaDetail({ airtableUser }) {
   async function commitTaskNameEdit(task) {
 	const newName = editingTaskName.trim();
 
-	// If user typed "xxx", you could do a delete here if desired, omitted for brevity
-
+	// local update
 	const updated = tasks.map((t) => {
 	  if (t.id === task.id) {
 		return {
@@ -528,23 +512,26 @@ function IdeaDetail({ airtableUser }) {
 
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				TaskName: newName || "(No Name)",
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  TaskName: newName || "(No Name)",
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[commitTaskNameEdit] error:", airtableError);
@@ -567,7 +554,6 @@ function IdeaDetail({ airtableUser }) {
 	const wasFocusToday = task.fields.Focus === "today";
 	const newValue = wasFocusToday ? "" : "today";
 
-	// optimistic local update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -584,23 +570,26 @@ function IdeaDetail({ airtableUser }) {
 
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Focus: newValue,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  Focus: newValue,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[handleToggleFocus] error:", airtableError);
@@ -643,7 +632,6 @@ function IdeaDetail({ airtableUser }) {
 	setShowMilestoneModal(false);
 	setActiveTaskForMilestone(null);
 
-	// local update
 	const updated = tasks.map((t) => {
 	  if (t.id === targetTask.id) {
 		return {
@@ -658,26 +646,28 @@ function IdeaDetail({ airtableUser }) {
 	});
 	setTasks(updated);
 
-	// Patch
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: targetTask.id,
-			  fields: {
-				MilestoneID: milestone.fields.MilestoneID,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: targetTask.id,
+				fields: {
+				  MilestoneID: milestone.fields.MilestoneID,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[assignMilestoneToTask] error:", airtableError);
@@ -693,7 +683,6 @@ function IdeaDetail({ airtableUser }) {
 
   async function removeMilestoneFromTask(task) {
 	if (!task) return;
-	// local update => clear
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -702,24 +691,26 @@ function IdeaDetail({ airtableUser }) {
 	  )
 	);
 
-	// patch
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: { MilestoneID: "" },
-			},
-		  ],
-		}),
-	  });
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: { MilestoneID: "" },
+			  },
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -743,7 +734,6 @@ function IdeaDetail({ airtableUser }) {
 		throw new Error("Parent task lacks a TaskID field.");
 	  }
 
-	  // We'll store SubOrder as childSubs.length + 1
 	  const childSubs = tasks.filter(
 		(t) => t.fields.ParentTask === parentTaskID
 	  );
@@ -787,6 +777,77 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
+  // NEW (NOTES EDIT): Start, Cancel, and Commit edits for TaskNotes
+  // ------------------------------------------------------------------
+  function startEditingNotes(task) {
+	setEditingNotesTaskId(task.id);
+	setEditingNotesText(task.fields.TaskNotes || "");
+  }
+
+  function cancelEditingNotes() {
+	setEditingNotesTaskId(null);
+	setEditingNotesText("");
+  }
+
+  async function commitTaskNotesEdit(task) {
+	const newNotes = editingNotesText.trim();
+
+	// Local update
+	const updated = tasks.map((t) => {
+	  if (t.id === task.id) {
+		return {
+		  ...t,
+		  fields: {
+			...t.fields,
+			TaskNotes: newNotes,
+		  },
+		};
+	  }
+	  return t;
+	});
+	setTasks(updated);
+
+	// Patch to Airtable
+	try {
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Tasks`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: task.id,
+				fields: {
+				  TaskNotes: newNotes,
+				},
+			  },
+			],
+		  }),
+		}
+	  );
+	  if (!patchResp.ok) {
+		const airtableError = await patchResp.json().catch(() => ({}));
+		console.error("[commitTaskNotesEdit] error:", airtableError);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error updating TaskNotes:", err);
+	  setError("Failed to update notes. Please refresh.");
+	} finally {
+	  // Clear out editing UI
+	  cancelEditingNotes();
+	}
+  }
+
+  // ------------------------------------------------------------------
   // 10) Task progress
   // ------------------------------------------------------------------
   const totalTasks = tasks.length;
@@ -794,7 +855,6 @@ function IdeaDetail({ airtableUser }) {
   const percentage =
 	totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // Final top-level array => uncompleted then completed
   const finalTopTasks = getSortedTopLevel();
 
   // ------------------------------------------------------------------
@@ -831,13 +891,11 @@ function IdeaDetail({ airtableUser }) {
 		/>
 	  )}
 
-	  {/* Back link above the Title */}
 	  <Link to="/" className="text-blue-600 underline">
 		← Back
 	  </Link>
 	  <h2 className="text-2xl font-bold mt-2">{ideaTitle}</h2>
 
-	  {/* Progress bar */}
 	  <TaskProgressBar
 		completedTasks={completedTasks}
 		totalTasks={totalTasks}
@@ -862,7 +920,6 @@ function IdeaDetail({ airtableUser }) {
 		  </button>
 		</div>
 
-		{/* Toggle for “Top of list” vs “Bottom of list” */}
 		<div className="flex items-center space-x-6">
 		  <label className="inline-flex items-center space-x-2">
 			<input
@@ -894,6 +951,7 @@ function IdeaDetail({ airtableUser }) {
 		  {finalTopTasks.map((task) => {
 			const {
 			  TaskName,
+			  TaskNotes,
 			  Completed,
 			  CompletedTime,
 			  Focus,
@@ -902,11 +960,13 @@ function IdeaDetail({ airtableUser }) {
 			  MilestoneName,
 			} = task.fields;
 
-			const isEditing = editingTaskId === task.id;
+			const isEditingTitle = editingTaskId === task.id;
+			const isEditingNotes = editingNotesTaskId === task.id; // NEW (NOTES EDIT)
 			const titleClasses = `font-semibold ${
 			  Completed ? "line-through text-gray-500" : ""
 			}`;
 
+			// Completed date
 			let completedLabel = "";
 			if (Completed && CompletedTime) {
 			  try {
@@ -917,8 +977,10 @@ function IdeaDetail({ airtableUser }) {
 			  }
 			}
 
+			// Focus emoji
 			const focusEmoji = Focus === "today" ? "☀️" : "💤";
 
+			// Milestone row (same as before)
 			let milestoneRow = null;
 			if (MilestoneID) {
 			  let mileName = MilestoneName || "";
@@ -926,16 +988,14 @@ function IdeaDetail({ airtableUser }) {
 				const foundM = allMilestones.find(
 				  (m) => m.fields.MilestoneID === MilestoneID
 				);
-				mileName = foundM?.fields?.MilestoneName || "(Unknown Milestone)";
+				mileName =
+				  foundM?.fields?.MilestoneName || "(Unknown Milestone)";
 			  }
 			  milestoneRow = (
 				<div className="group mb-1 inline-flex items-center">
 				  <p className="text-sm text-blue-700 font-semibold">
 					🏔{" "}
-					<Link
-					  to={`/milestones/${MilestoneID}`}
-					  className="underline"
-					>
+					<Link to={`/milestones/${MilestoneID}`} className="underline">
 					  {mileName}
 					</Link>
 				  </p>
@@ -961,15 +1021,14 @@ function IdeaDetail({ airtableUser }) {
 			  );
 			}
 
+			// Subtasks
 			const childTasks = getSortedSubtasks(TaskID);
 
 			return (
-			  <li
-				key={task.id}
-				className="border border-gray-300 rounded p-3"
-			  >
+			  <li key={task.id} className="border border-gray-300 rounded p-3">
 				{milestoneRow}
 
+				{/* Top-level TASK ROW */}
 				<div className="flex items-center gap-2">
 				  {!Completed && (
 					<div
@@ -979,11 +1038,10 @@ function IdeaDetail({ airtableUser }) {
 					  ⇅
 					</div>
 				  )}
-
 				  <span
 					className="cursor-pointer"
 					onClick={() => handleToggleFocus(task)}
-					title="Click to toggle Focus"
+					title="Toggle Focus"
 				  >
 					{focusEmoji}
 				  </span>
@@ -994,7 +1052,8 @@ function IdeaDetail({ airtableUser }) {
 					onChange={() => handleToggleCompleted(task)}
 				  />
 
-				  {isEditing ? (
+				  {/* TaskName => Inline Edit */}
+				  {isEditingTitle ? (
 					<input
 					  type="text"
 					  value={editingTaskName}
@@ -1022,10 +1081,59 @@ function IdeaDetail({ airtableUser }) {
 
 				{Completed && completedLabel && (
 				  <p className="text-xs text-gray-500 ml-6 mt-1">
-					{completedLabel}
+					Completed on {completedLabel}
 				  </p>
 				)}
 
+				{/* NEW (NOTES EDIT) => Show "notes" section */}
+				<div className="ml-6 mt-2">
+				  {isEditingNotes ? (
+					/* If this task's notes are being edited => show textarea, Save, Cancel */
+					<div className="space-y-2">
+					  <textarea
+						rows={3}
+						className="w-full border p-1 rounded"
+						value={editingNotesText}
+						onChange={(e) => setEditingNotesText(e.target.value)}
+					  />
+					  <div className="flex space-x-2">
+						<button
+						  onClick={() => commitTaskNotesEdit(task)}
+						  className="text-xs bg-blue-600 text-white px-2 py-1 rounded"
+						>
+						  Save
+						</button>
+						<button
+						  onClick={cancelEditingNotes}
+						  className="text-xs bg-gray-300 px-2 py-1 rounded"
+						>
+						  Cancel
+						</button>
+					  </div>
+					</div>
+				  ) : (
+					/* If not editing notes => check if there's any. If yes, display them. Otherwise display +Add link. */
+					<>
+					  {TaskNotes && TaskNotes.trim().length > 0 ? (
+						<p
+						  className="text-sm text-gray-600 cursor-pointer hover:underline"
+						  onClick={() => startEditingNotes(task)}
+						>
+						  {TaskNotes}
+						</p>
+					  ) : (
+						<p
+						  className="text-xs text-blue-600 underline cursor-pointer"
+						  onClick={() => startEditingNotes(task)}
+						>
+						  + Add Notes
+						</p>
+					  )}
+					</>
+				  )}
+				</div>
+
+				{/* Add Subtask link */}
 				<div className="ml-6 mt-1">
 				  <span
 					className="text-xs text-blue-600 underline cursor-pointer"
@@ -1035,15 +1143,16 @@ function IdeaDetail({ airtableUser }) {
 				  </span>
 				</div>
 
+				{/* Child subtasks */}
 				{childTasks.length > 0 && (
 				  <ul
 					className="mt-2 ml-6 border-l border-gray-200 space-y-2"
 					ref={(el) => (subtaskRefs.current[task.id] = el)}
 				  >
 					{childTasks.map((sub) => {
-					  const subId = sub.id;
 					  const {
 						TaskName: subName,
+						TaskNotes: subNotes,
 						Completed: subCompleted,
 						CompletedTime: subCT,
 						Focus: subFocus,
@@ -1051,7 +1160,9 @@ function IdeaDetail({ airtableUser }) {
 						MilestoneName: subMileName,
 					  } = sub.fields;
 
-					  const isEditingSub = editingTaskId === subId;
+					  const isEditingSubTitle = editingTaskId === sub.id;
+					  const isEditingSubNotes = editingNotesTaskId === sub.id;
+
 					  const subTitleClasses = subCompleted
 						? "line-through text-gray-500"
 						: "";
@@ -1069,53 +1180,13 @@ function IdeaDetail({ airtableUser }) {
 					  const subFocusEmoji =
 						subFocus === "today" ? "☀️" : "💤";
 
-					  let subMilesRow = null;
-					  if (subMileID) {
-						let actualName = subMileName || "";
-						if (!actualName) {
-						  const fm = allMilestones.find(
-							(m) => m.fields.MilestoneID === subMileID
-						  );
-						  actualName =
-							fm?.fields?.MilestoneName || "(Unknown)";
-						}
-						subMilesRow = (
-						  <div className="group mb-1 inline-flex items-center">
-							<p className="text-sm text-blue-700 font-semibold">
-							  🏔{" "}
-							  <Link
-								to={`/milestones/${subMileID}`}
-								className="underline"
-							  >
-								{actualName}
-							  </Link>
-							</p>
-							<span
-							  className="
-								ml-2
-								text-xs
-								text-blue-600
-								underline
-								cursor-pointer
-								hidden
-								group-hover:inline-block
-							  "
-							  onClick={() => handlePickMilestone(sub)}
-							>
-							  Edit
-							</span>
-						  </div>
-						);
-					  }
-
 					  return (
 						<li
-						  key={subId}
+						  key={sub.id}
 						  className="pl-2 border-b last:border-b-0 pb-2"
 						>
-						  {subMilesRow}
-
 						  <div className="flex items-center gap-2">
+							{/* Sortable handle if not completed */}
 							{!subCompleted && (
 							  <div
 								className="sub-drag-handle text-gray-400 cursor-grab active:cursor-grabbing"
@@ -1138,11 +1209,14 @@ function IdeaDetail({ airtableUser }) {
 							  onChange={() => handleToggleCompleted(sub)}
 							/>
 
-							{isEditingSub ? (
+							{/* Subtask name => inline editing */}
+							{isEditingSubTitle ? (
 							  <input
 								type="text"
 								value={editingTaskName}
-								onChange={(e) => setEditingTaskName(e.target.value)}
+								onChange={(e) =>
+								  setEditingTaskName(e.target.value)
+								}
 								onBlur={() => commitTaskNameEdit(sub)}
 								onKeyDown={(e) => {
 								  if (e.key === "Enter") {
@@ -1166,9 +1240,57 @@ function IdeaDetail({ airtableUser }) {
 
 						  {subCompleted && subCompletedLabel && (
 							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  {subCompletedLabel}
+							  Completed on {subCompletedLabel}
 							</p>
 						  )}
+
+						  {/* Subtask notes => same logic */}
+						  <div className="ml-6 mt-2">
+							{isEditingSubNotes ? (
+							  <div className="space-y-2">
+								<textarea
+								  rows={3}
+								  className="w-full border p-1 rounded"
+								  value={editingNotesText}
+								  onChange={(e) =>
+									setEditingNotesText(e.target.value)
+								  }
+								/>
+								<div className="flex space-x-2">
+								  <button
+									onClick={() => commitTaskNotesEdit(sub)}
+									className="text-xs bg-blue-600 text-white px-2 py-1 rounded"
+								  >
+									Save
+								  </button>
+								  <button
+									onClick={cancelEditingNotes}
+									className="text-xs bg-gray-300 px-2 py-1 rounded"
+								  >
+									Cancel
+								  </button>
+								</div>
+							  </div>
+							) : (
+							  <>
+								{subNotes && subNotes.trim().length > 0 ? (
+								  <p
+									className="text-sm text-gray-600 cursor-pointer hover:underline"
+									onClick={() => startEditingNotes(sub)}
+								  >
+									{subNotes}
+								  </p>
+								) : (
+								  <p
+									className="text-xs text-blue-600 underline cursor-pointer"
+									onClick={() => startEditingNotes(sub)}
+								  >
+									+ Add Notes
+								  </p>
+								)}
+							  </>
+							)}
+						  </div>
 						</li>
 					  );
 					})}
