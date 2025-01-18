@@ -1,3 +1,5 @@
+// File: /src/TodayView.js
+
 import React, {
   useEffect,
   useState,
@@ -8,7 +10,7 @@ import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
 import { Link } from "react-router-dom";
 
-import MilestoneModal from "./MilestoneModal"; // Import your MilestoneModal component if not already
+import MilestoneModal from "./MilestoneModal";
 
 function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
@@ -19,15 +21,7 @@ function TodayView({ airtableUser }) {
   useEffect(() => {
 	function getTargetTime() {
 	  const now = new Date();
-	  const target = new Date(
-		now.getFullYear(),
-		now.getMonth(),
-		now.getDate(),
-		16, // 16 = 4pm
-		20,
-		0,
-		0
-	  );
+	  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 20, 0, 0);
 	  if (target < now) {
 		target.setDate(target.getDate() + 1);
 	  }
@@ -35,8 +29,7 @@ function TodayView({ airtableUser }) {
 	}
 
 	function updateCountdown() {
-	  const now = Date.now();
-	  const diff = getTargetTime().getTime() - now;
+	  const diff = getTargetTime().getTime() - Date.now();
 	  if (diff <= 0) {
 		setDailyCountdown("Time’s up!");
 		return;
@@ -66,7 +59,6 @@ function TodayView({ airtableUser }) {
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
   const [milestones, setMilestones] = useState([]);
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -78,45 +70,32 @@ function TodayView({ airtableUser }) {
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
   const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
 
-  // ------------------------------------------------------------------
-  // 2) Refs for Sortable
-  // ------------------------------------------------------------------
-  const incompleteListRef = useRef(null);
-  const sortableRef = useRef(null);
-  const subtaskRefs = useRef({});
-
-  // ------------------------------------------------------------------
-  // Airtable ENV
-  // ------------------------------------------------------------------
+  // Airtable env
   const userId = airtableUser?.fields?.UserID || null;
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
+  // Refs for Sortable
+  const incompleteListRef = useRef(null);
+  const sortableRef = useRef(null);
+
   // ------------------------------------------------------------------
-  // Subcomponent: TodayProgressBar
+  // 2) Helpers for idea & milestone
   // ------------------------------------------------------------------
-  function TodayProgressBar({ completedTasks, totalTasks, percentage }) {
-	if (totalTasks === 0) {
-	  return <p className="text-sm text-gray-500">No tasks for Today yet.</p>;
-	}
-	return (
-	  <div className="my-4">
-		<p className="text-sm text-gray-600">
-		  {completedTasks} of {totalTasks} completed
-		  <span className="ml-2">({percentage}%)</span>
-		</p>
-		<div className="bg-gray-200 h-3 rounded mt-1 w-full">
-		  <div
-			className="bg-green-500 h-3 rounded"
-			style={{ width: `${percentage}%` }}
-		  />
-		</div>
-	  </div>
-	);
+  function findIdeaTitle(task) {
+	if (!task?.fields?.IdeaID) return "";
+	const found = ideas.find((i) => i.fields.IdeaID === task.fields.IdeaID);
+	return found?.fields?.IdeaTitle || "";
+  }
+
+  function findMilestoneName(task) {
+	if (!task?.fields?.MilestoneID) return "";
+	const rec = milestones.find((m) => m.fields.MilestoneID === task.fields.MilestoneID);
+	return rec?.fields?.MilestoneName || "";
   }
 
   // ------------------------------------------------------------------
-  // 3) Fetch tasks, ideas, milestones
+  // 3) Fetch tasks (Focus="today"), plus ideas + milestones
   // ------------------------------------------------------------------
   useEffect(() => {
 	if (!userId) {
@@ -134,7 +113,6 @@ function TodayView({ airtableUser }) {
 	  try {
 		setLoading(true);
 
-		// Double-check Firebase Auth
 		const auth = getAuth();
 		const currentUser = auth.currentUser;
 		if (!currentUser) {
@@ -145,6 +123,7 @@ function TodayView({ airtableUser }) {
 		const filterFormula = `AND({Focus}="today", {UserID}="${userId}")`;
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", filterFormula);
+		// sort by OrderToday ascending
 		tasksUrl.searchParams.set("sort[0][field]", "OrderToday");
 		tasksUrl.searchParams.set("sort[0][direction]", "asc");
 
@@ -152,31 +131,37 @@ function TodayView({ airtableUser }) {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!tasksResp.ok) {
-		  throw new Error(`Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`);
+		  throw new Error(
+			`Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
+		  );
 		}
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// B) Ideas => for current user
+		// B) Ideas
 		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
 		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 		const ideasResp = await fetch(ideasUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!ideasResp.ok) {
-		  throw new Error(`Airtable error (Ideas): ${ideasResp.status} ${ideasResp.statusText}`);
+		  throw new Error(
+			`Airtable error (Ideas): ${ideasResp.status} ${ideasResp.statusText}`
+		  );
 		}
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
 
-		// C) Milestones => for current user
+		// C) Milestones
 		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
 		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 		const msResp = await fetch(msUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
 		if (!msResp.ok) {
-		  throw new Error(`Airtable error (Milestones): ${msResp.status} ${msResp.statusText}`);
+		  throw new Error(
+			`Airtable error (Milestones): ${msResp.status} ${msResp.statusText}`
+		  );
 		}
 		const msData = await msResp.json();
 		setMilestones(msData.records);
@@ -193,12 +178,13 @@ function TodayView({ airtableUser }) {
   }, [userId, baseId, apiKey]);
 
   // ------------------------------------------------------------------
-  // 4) "Top-level" Sortable for incomplete tasks
+  // 4) Sortable for incomplete tasks
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
-	if (!loading && incompleteListRef.current && !sortableRef.current) {
-	  const inc = getIncompleteParentTasks();
-	  if (inc.length > 0) {
+	if (!loading && tasks.length > 0 && incompleteListRef.current && !sortableRef.current) {
+	  const incomplete = tasks.filter((t) => !t.fields.Completed);
+
+	  if (incomplete.length > 0) {
 		sortableRef.current = new Sortable(incompleteListRef.current, {
 		  animation: 150,
 		  handle: ".drag-handle",
@@ -214,136 +200,51 @@ function TodayView({ airtableUser }) {
 	};
   }, [loading, tasks]);
 
-  const handleSortEnd = async (evt) => {
+  async function handleSortEnd(evt) {
 	const { oldIndex, newIndex } = evt;
 	if (oldIndex === newIndex) return;
 
-	const inc = getIncompleteParentTasks();
-	const updated = [...inc];
+	const incomplete = tasks.filter((t) => !t.fields.Completed);
+	const updated = [...incomplete];
 	const [moved] = updated.splice(oldIndex, 1);
 	updated.splice(newIndex, 0, moved);
 
-	// Reassign .OrderToday
-	updated.forEach((t, i) => {
-	  t.fields.OrderToday = i + 1;
+	// reassign .OrderToday
+	updated.forEach((item, idx) => {
+	  item.fields.OrderToday = idx + 1; 
 	});
 
-	// Rebuild tasks array
+	// rebuild tasks array
 	const completed = tasks.filter((t) => t.fields.Completed);
-	const subs = tasks.filter((t) => t.fields.ParentTask);
-	setTasks([...updated, ...completed, ...subs]);
+	setTasks([...updated, ...completed]);
 
-	// Patch
+	// patch to airtable
 	try {
-	  await patchOrderTodayToAirtable(updated);
-	} catch (err) {
-	  console.error("Error updating OrderToday =>", err);
-	  setError("Failed to reorder tasks for Today. Please try again.");
-	}
-  };
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 
-  async function patchOrderTodayToAirtable(incompleteArr) {
-	if (!baseId || !apiKey) {
-	  throw new Error("Missing Airtable credentials for patching order.");
-	}
-	const chunkSize = 10;
-	for (let i = 0; i < incompleteArr.length; i += chunkSize) {
-	  const chunk = incompleteArr.slice(i, i + chunkSize).map((t) => ({
-		id: t.id,
-		fields: { OrderToday: t.fields.OrderToday },
-	  }));
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({ records: chunk }),
-	  });
-	  if (!resp.ok) {
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
-	  }
-	}
-  }
-
-  // ------------------------------------------------------------------
-  // 4b) Subtask Sortable => one instance per parent
-  // ------------------------------------------------------------------
-  useLayoutEffect(() => {
-	if (!loading && tasks.length > 0) {
-	  const parentTasks = tasks.filter((t) => !t.fields.ParentTask);
-	  parentTasks.forEach((p) => {
-		const incSubs = getIncompleteSubtasks(p);
-		if (incSubs.length === 0) return;
-
-		const listEl = subtaskRefs.current[p.id];
-		if (!listEl) return;
-
-		if (listEl._sortable) listEl._sortable.destroy();
-
-		listEl._sortable = new Sortable(listEl, {
-		  animation: 150,
-		  handle: ".sub-drag-handle",
-		  onEnd: (evt) => handleSubtaskSortEnd(evt, p),
+	  const chunkSize = 10;
+	  for (let i = 0; i < updated.length; i += chunkSize) {
+		const chunk = updated.slice(i, i + chunkSize).map((t) => ({
+		  id: t.id,
+		  fields: { OrderToday: t.fields.OrderToday },
+		}));
+		const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({ records: chunk }),
 		});
-	  });
-	}
-	return () => {
-	  Object.values(subtaskRefs.current).forEach((el) => {
-		if (el && el._sortable) el._sortable.destroy();
-	  });
-	};
-  }, [loading, tasks]);
-
-  async function handleSubtaskSortEnd(evt, parent) {
-	const { oldIndex, newIndex } = evt;
-	if (oldIndex === newIndex) return;
-
-	const incSubs = getIncompleteSubtasks(parent);
-	const updated = [...incSubs];
-	const [moved] = updated.splice(oldIndex, 1);
-	updated.splice(newIndex, 0, moved);
-
-	updated.forEach((st, i) => {
-	  st.fields.SubOrder = i + 1;
-	});
-
-	const others = tasks.filter((t) => t.fields.ParentTask !== parent.fields.TaskID);
-	updated.forEach((u) => {
-	  const idx = others.findIndex((x) => x.id === u.id);
-	  if (idx >= 0) others[idx] = u;
-	});
-	setTasks([...others, ...updated]);
-
-	try {
-	  await patchSubOrderToAirtable(updated);
-	} catch (err) {
-	  console.error("Error updating SubOrder =>", err);
-	  setError("Failed to reorder subtasks. Please try again.");
-	}
-  }
-
-  async function patchSubOrderToAirtable(subArr) {
-	if (!baseId || !apiKey) {
-	  throw new Error("Missing Airtable credentials for patching SubOrder.");
-	}
-	const chunkSize = 10;
-	for (let i = 0; i < subArr.length; i += chunkSize) {
-	  const chunk = subArr.slice(i, i + chunkSize).map((t) => ({
-		id: t.id,
-		fields: { SubOrder: t.fields.SubOrder },
-	  }));
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({ records: chunk }),
-	  });
-	  if (!resp.ok) {
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		if (!resp.ok) {
+		  throw new Error(
+			`Airtable error: ${resp.status} ${resp.statusText}`
+		  );
+		}
 	  }
+	} catch (err) {
+	  console.error("[TodayView] handleSortEnd =>", err);
+	  setError("Failed to reorder tasks. Please try again.");
 	}
   }
 
@@ -352,24 +253,22 @@ function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
 	const wasCompleted = !!task.fields.Completed;
-	const newValue = !wasCompleted;
-	const newTime = newValue ? new Date().toISOString() : null;
+	const newVal = !wasCompleted;
+	const newTime = newVal ? new Date().toISOString() : null;
 
+	// local
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
 		  ? {
 			  ...t,
-			  fields: {
-				...t.fields,
-				Completed: newValue,
-				CompletedTime: newTime,
-			  },
+			  fields: { ...t.fields, Completed: newVal, CompletedTime: newTime },
 			}
 		  : t
 	  )
 	);
 
+	// patch
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
@@ -382,19 +281,18 @@ function TodayView({ airtableUser }) {
 		  records: [
 			{
 			  id: task.id,
-			  fields: {
-				Completed: newValue,
-				CompletedTime: newTime,
-			  },
+			  fields: { Completed: newVal, CompletedTime: newTime },
 			},
 		  ],
 		}),
 	  });
 	  if (!patchResp.ok) {
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
-	  console.error("Error toggling Completed =>", err);
+	  console.error("[TodayView] handleToggleCompleted =>", err);
 	  setError("Failed to toggle Completed. Please try again.");
 
 	  // revert
@@ -416,17 +314,19 @@ function TodayView({ airtableUser }) {
   };
 
   const handleToggleFocus = async (task) => {
-	const wasFocusToday = (task.fields.Focus === "today");
-	const newValue = wasFocusToday ? "" : "today";
+	const wasFocus = (task.fields.Focus === "today");
+	const newVal = wasFocus ? "" : "today";
 
+	// local
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
-		  ? { ...t, fields: { ...t.fields, Focus: newValue } }
+		  ? { ...t, fields: { ...t.fields, Focus: newVal } }
 		  : t
 	  )
 	);
 
+	// patch
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
@@ -439,16 +339,18 @@ function TodayView({ airtableUser }) {
 		  records: [
 			{
 			  id: task.id,
-			  fields: { Focus: newValue },
+			  fields: { Focus: newVal },
 			},
 		  ],
 		}),
 	  });
 	  if (!patchResp.ok) {
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
-	  console.error("Error toggling Focus =>", err);
+	  console.error("[TodayView] handleToggleFocus =>", err);
 	  setError("Failed to toggle Focus. Please try again.");
 
 	  // revert
@@ -457,10 +359,7 @@ function TodayView({ airtableUser }) {
 		  t.id === task.id
 			? {
 				...t,
-				fields: {
-				  ...t.fields,
-				  Focus: wasFocusToday ? "today" : "",
-				},
+				fields: { ...t.fields, Focus: wasFocus ? "today" : "" },
 			  }
 			: t
 		)
@@ -469,7 +368,7 @@ function TodayView({ airtableUser }) {
   };
 
   // ------------------------------------------------------------------
-  // 6) Inline editing for a task => "xxx" = delete
+  // 6) Inline editing => rename or "xxx" => delete
   // ------------------------------------------------------------------
   function startEditingTask(task) {
 	setEditingTaskId(task.id);
@@ -500,13 +399,7 @@ function TodayView({ airtableUser }) {
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
-			? {
-				...t,
-				fields: {
-				  ...t.fields,
-				  TaskName: trimmed,
-				},
-			  }
+			? { ...t, fields: { ...t.fields, TaskName: trimmed } }
 			: t
 		)
 	  );
@@ -528,12 +421,12 @@ function TodayView({ airtableUser }) {
 		}),
 	  });
 	  if (!resp.ok) {
-		const eData = await resp.json().catch(() => ({}));
-		console.error("commitTaskEdit =>", eData);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 	} catch (err) {
-	  console.error("Error editing task =>", err);
+	  console.error("[TodayView] commitTaskEdit =>", err);
 	  setError("Failed to update task name. Please try again.");
 	} finally {
 	  cancelEditingTask();
@@ -542,77 +435,25 @@ function TodayView({ airtableUser }) {
 
   async function deleteTask(task) {
 	setTasks((prev) => prev.filter((t) => t.id !== task.id));
-	if (!baseId || !apiKey) return;
 
 	try {
+	  if (!baseId || !apiKey) return;
 	  const delUrl = `https://api.airtable.com/v0/${baseId}/Tasks/${task.id}`;
 	  const resp = await fetch(delUrl, {
 		method: "DELETE",
 		headers: { Authorization: `Bearer ${apiKey}` },
 	  });
 	  if (!resp.ok) {
-		const eData = await resp.json().catch(() => ({}));
-		console.error("[TodayView] deleteTask =>", eData);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
 	} catch (err) {
 	  console.error("Failed to delete task =>", err);
-	  // optionally revert local
+	  // optionally revert
 	}
   }
 
   // ------------------------------------------------------------------
-  // 7) Helper => grouping tasks
-  // ------------------------------------------------------------------
-  function getIncompleteParentTasks() {
-	const parents = tasks.filter((t) => !t.fields.ParentTask && !t.fields.Completed);
-	parents.sort((a,b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
-	return parents;
-  }
-  function getCompletedParentTasks() {
-	const parents = tasks.filter((t) => !t.fields.ParentTask && t.fields.Completed);
-	parents.sort((a,b) => {
-	  const tA = a.fields.CompletedTime || "";
-	  const tB = b.fields.CompletedTime || "";
-	  return tB.localeCompare(tA);
-	});
-	return parents;
-  }
-  function getIncompleteSubtasks(parentTask) {
-	const pid = parentTask.fields.TaskID;
-	if (!pid) return [];
-	const subs = tasks.filter((s) => s.fields.ParentTask === pid && !s.fields.Completed);
-	subs.sort((a,b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
-	return subs;
-  }
-  function getCompletedSubtasks(parentTask) {
-	const pid = parentTask.fields.TaskID;
-	if (!pid) return [];
-	const subs = tasks.filter((s) => s.fields.ParentTask === pid && s.fields.Completed);
-	subs.sort((a,b) => {
-	  const tA = a.fields.CompletedTime || "";
-	  const tB = b.fields.CompletedTime || "";
-	  return tB.localeCompare(tA);
-	});
-	return subs;
-  }
-
-  // ------------------------------------------------------------------
-  // 8) Lookup: Idea / Milestone
-  // ------------------------------------------------------------------
-  const findIdeaForTask = (task) => {
-	const ideaId = task.fields.IdeaID;
-	if (!ideaId) return null;
-	return ideas.find((i) => i.fields.IdeaID === ideaId) || null;
-  };
-  const findMilestoneForTask = (task) => {
-	const milestoneId = task.fields.MilestoneID;
-	if (!milestoneId) return null;
-	return milestones.find((m) => m.fields.MilestoneID === milestoneId) || null;
-  };
-
-  // ------------------------------------------------------------------
-  // 8b) "Add/Edit" Milestone logic
+  // 7) Milestone assignment
   // ------------------------------------------------------------------
   function handlePickMilestone(task) {
 	setActiveTaskForMilestone(task);
@@ -622,8 +463,6 @@ function TodayView({ airtableUser }) {
   async function assignMilestoneToTask(milestone) {
 	if (!activeTaskForMilestone) return;
 	const target = activeTaskForMilestone;
-	setShowMilestoneModal(false);
-	setActiveTaskForMilestone(null);
 
 	// local
 	setTasks((prev) =>
@@ -640,9 +479,8 @@ function TodayView({ airtableUser }) {
 	  )
 	);
 
-	// Patch
-	if (!baseId || !apiKey) return;
 	try {
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -662,18 +500,20 @@ function TodayView({ airtableUser }) {
 	  });
 	  if (!patchResp.ok) {
 		throw new Error(
-		  `Airtable error (assignMilestoneToTask): ${patchResp.status} ${patchResp.statusText}`
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
 	  }
 	} catch (err) {
-	  console.error("Error assigning milestone =>", err);
+	  console.error("[TodayView] assignMilestoneToTask =>", err);
 	  setError("Failed to assign milestone. Please refresh.");
+	} finally {
+	  setShowMilestoneModal(false);
+	  setActiveTaskForMilestone(null);
 	}
   }
 
   async function removeMilestoneFromTask(task) {
 	if (!task) return;
-	// local => clear
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -682,9 +522,8 @@ function TodayView({ airtableUser }) {
 	  )
 	);
 
-	// patch
-	if (!baseId || !apiKey) return;
 	try {
+	  if (!baseId || !apiKey) return;
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -702,23 +541,34 @@ function TodayView({ airtableUser }) {
 	  });
 	  if (!patchResp.ok) {
 		throw new Error(
-		  `Airtable error (removeMilestoneFromTask): ${patchResp.status} ${patchResp.statusText}`
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
 		);
 	  }
 	} catch (err) {
-	  console.error("Error removing milestone =>", err);
+	  console.error("[TodayView] removeMilestoneFromTask =>", err);
 	  setError("Failed to remove milestone. Please refresh.");
 	}
   }
 
   // ------------------------------------------------------------------
-  // 9) Progress calculations => only tasks with Focus="today"
+  // 8) Today’s progress stats & partition tasks
   // ------------------------------------------------------------------
   const totalTasks = tasks.length;
   const completedCount = tasks.filter((t) => t.fields.Completed).length;
-  const percentage = (totalTasks > 0)
+  const percentage = totalTasks
 	? Math.round((completedCount / totalTasks) * 100)
 	: 0;
+
+  const incompleteTasks = tasks.filter((t) => !t.fields.Completed);
+  const completedTasks = tasks.filter((t) => t.fields.Completed);
+
+  // Sort them
+  incompleteTasks.sort((a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
+  completedTasks.sort((a, b) => {
+	const aTime = a.fields.CompletedTime || "";
+	const bTime = b.fields.CompletedTime || "";
+	return bTime.localeCompare(aTime);
+  });
 
   // ------------------------------------------------------------------
   // Render
@@ -729,10 +579,6 @@ function TodayView({ airtableUser }) {
   if (error) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
-
-  const incompleteParents = getIncompleteParentTasks();
-  const completedParents = getCompletedParentTasks();
-
   if (tasks.length === 0) {
 	return (
 	  <div className="m-4">
@@ -761,485 +607,184 @@ function TodayView({ airtableUser }) {
 		{dailyCountdown}
 	  </div>
 
-	  <h2 className="text-2xl font-bold mb-4">Today's Tasks</h2>
+	  <h2 className="text-2xl font-bold mb-2">Today's Tasks</h2>
 
-	  <TodayProgressBar
-		completedTasks={completedCount}
-		totalTasks={totalTasks}
-		percentage={percentage}
-	  />
+	  {/* Progress summary */}
+	  <p className="text-sm text-gray-600">
+		{completedCount} of {totalTasks} tasks completed ({percentage}%)
+	  </p>
+	  {/* Actual progress bar */}
+	  <div className="bg-gray-200 h-3 rounded mt-1 w-full max-w-md mb-4">
+		<div
+		  className="bg-green-500 h-3 rounded"
+		  style={{ width: `${percentage}%` }}
+		/>
+	  </div>
 
-	  {/* INCOMPLETE PARENTS */}
-	  {incompleteParents.length > 0 && (
-		<ul className="divide-y border rounded mb-6" ref={incompleteListRef}>
-		  {incompleteParents.map((parent, index) => {
-			const isCompleted = !!parent.fields.Completed;
-			const completedTime = parent.fields.CompletedTime || null;
-			const isFocus = (parent.fields.Focus === "today");
-			const isEditingThis = (editingTaskId === parent.id);
+	  {/* INCOMPLETE LIST */}
+	  <ul className="mb-6 border rounded divide-y" ref={incompleteListRef}>
+		{incompleteTasks.map((task, idx) => {
+		  const isFirstItem = idx === 0;
+		  const isEditing = editingTaskId === task.id;
+		  const isCompleted = !!task.fields.Completed;
+		  const completedTime = task.fields.CompletedTime || null;
 
-			const milestone = findMilestoneForTask(parent);
-			const idea = findIdeaForTask(parent);
+		  const ideaTitle = findIdeaTitle(task);
+		  const milestoneName = findMilestoneName(task);
 
-			const incSubs = getIncompleteSubtasks(parent);
-			const compSubs = getCompletedSubtasks(parent);
+		  const rowClasses = isFirstItem
+			? "p-3 bg-amber-100 flex flex-col group"
+			: "p-3 hover:bg-gray-50 flex flex-col group";
 
-			const topItemClass = (index === 0)
-			  ? "bg-amber-100"
-			  : "hover:bg-gray-50";
+		  // Check if Focus = "today" => show ☀️, else 💤
+		  const isFocus = (task.fields.Focus === "today");
+		  const focusEmoji = isFocus ? "☀️" : "💤";
 
-			return (
-			  <li
-				key={parent.id}
-				className={`p-3 flex flex-col transition-colors ${topItemClass}`}
-			  >
-				{/* Milestone row => either milestone name + "Edit", or "Add Milestone" */}
-				<div className="mb-1 inline-flex items-center ml-6">
-				  {milestone ? (
-					<div className="group">
-					  <span className="text-sm text-blue-700 font-semibold">
-						🏔{" "}
-						<Link
-						  to={`/milestones/${milestone.fields.MilestoneID}`}
-						  className="underline"
-						>
-						  {milestone.fields.MilestoneName || "(Unnamed Milestone)"}
-						</Link>
-					  </span>
-					  <span
-						className="
-						  ml-2 text-xs text-blue-600 underline cursor-pointer
-						  hidden group-hover:inline-block
-						"
-						onClick={() => handlePickMilestone(parent)}
-					  >
-						Edit
-					  </span>
-					</div>
-				  ) : (
-					<button
-					  className="text-xs text-blue-600 underline"
-					  onClick={() => handlePickMilestone(parent)}
-					>
-					  + Add Milestone
-					</button>
-				  )}
+		  return (
+			<li key={task.id} className={rowClasses}>
+			  <div className="flex items-center">
+				<div
+				  className="drag-handle mr-2 text-gray-400 cursor-grab active:cursor-grabbing"
+				  title="Drag to reorder"
+				>
+				  ⇅
 				</div>
 
-				<div className="flex items-center">
-				  <div
-					className="drag-handle mr-3 text-gray-400 cursor-grab active:cursor-grabbing"
-					title="Drag to reorder tasks"
-				  >
-					<svg
-					  className="h-5 w-5"
-					  fill="none"
-					  stroke="currentColor"
-					  strokeWidth="1.5"
-					  viewBox="0 0 24 24"
-					>
-					  <path
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						d="M3.75 5h16.5M3.75 12h16.5m-16.5 7h16.5"
-					  />
-					</svg>
-				  </div>
+				<input
+				  type="checkbox"
+				  className="mr-2"
+				  checked={isCompleted}
+				  onChange={() => handleToggleCompleted(task)}
+				/>
 
+				{isEditing ? (
 				  <input
-					type="checkbox"
-					checked={isCompleted}
-					onChange={() => handleToggleCompleted(parent)}
-					className="mr-3"
+					autoFocus
+					type="text"
+					className="border-b border-gray-300 focus:outline-none flex-1"
+					value={editingTaskName}
+					onChange={(e) => setEditingTaskName(e.target.value)}
+					onBlur={() => commitTaskEdit(task)}
+					onKeyDown={(e) => {
+					  if (e.key === "Enter") commitTaskEdit(task);
+					  else if (e.key === "Escape") cancelEditingTask();
+					}}
 				  />
+				) : (
+				  <span
+					className="flex-1 cursor-pointer"
+					onClick={() => startEditingTask(task)}
+				  >
+					{task.fields.TaskName || "(Untitled Task)"}
+					{ideaTitle && ` (${ideaTitle})`}
+				  </span>
+				)}
 
-				  {/* Inline edit */}
-				  <div className="flex-1">
-					{isEditingThis ? (
+				<span
+				  className="ml-3 cursor-pointer text-xl"
+				  title="Toggle Focus"
+				  onClick={() => handleToggleFocus(task)}
+				>
+				  {focusEmoji}
+				</span>
+			  </div>
+
+			  {completedTime && (
+				<p className="ml-6 mt-1 text-xs text-gray-500">
+				  Completed on {new Date(completedTime).toLocaleString()}
+				</p>
+			  )}
+
+			  {/* Milestone link => either milestoneName or "+ Add Milestone" */}
+			  <div className="ml-6 mt-1">
+				<span
+				  className="text-xs text-blue-600 underline cursor-pointer"
+				  onClick={() => handlePickMilestone(task)}
+				>
+				  {milestoneName ? milestoneName : "+ Add Milestone"}
+				</span>
+			  </div>
+			</li>
+		  );
+		})}
+	  </ul>
+
+	  {/* COMPLETED LIST */}
+	  {completedTasks.length > 0 && (
+		<>
+		  <h3 className="text-md font-semibold mb-2">Completed</h3>
+		  <ul className="border rounded divide-y">
+			{completedTasks.map((task) => {
+			  const isEditing = editingTaskId === task.id;
+			  const completedTime = task.fields.CompletedTime || null;
+			  const ideaTitle = findIdeaTitle(task);
+			  const milestoneName = findMilestoneName(task);
+
+			  // Check focus
+			  const isFocus = (task.fields.Focus === "today");
+			  const focusEmoji = isFocus ? "☀️" : "💤";
+
+			  return (
+				<li key={task.id} className="p-3 hover:bg-gray-50 flex flex-col group">
+				  <div className="flex items-center">
+					<input
+					  type="checkbox"
+					  className="mr-2"
+					  checked={true}
+					  onChange={() => handleToggleCompleted(task)}
+					/>
+
+					{isEditing ? (
 					  <input
 						autoFocus
 						type="text"
-						className="border-b border-gray-300 focus:outline-none"
+						className="border-b border-gray-300 focus:outline-none flex-1"
 						value={editingTaskName}
 						onChange={(e) => setEditingTaskName(e.target.value)}
-						onBlur={() => commitTaskEdit(parent)}
+						onBlur={() => commitTaskEdit(task)}
 						onKeyDown={(e) => {
-						  if (e.key === "Enter") commitTaskEdit(parent);
+						  if (e.key === "Enter") commitTaskEdit(task);
 						  else if (e.key === "Escape") cancelEditingTask();
 						}}
 					  />
 					) : (
 					  <span
-						className={isCompleted ? "line-through text-gray-500" : ""}
-						onClick={() => startEditingTask(parent)}
+						className="flex-1 line-through text-gray-500 cursor-pointer"
+						onClick={() => startEditingTask(task)}
 					  >
-						{parent.fields.TaskName || "(Untitled Task)"}
+						{task.fields.TaskName || "(Untitled Task)"}
+						{ideaTitle && ` (${ideaTitle})`}
 					  </span>
 					)}
+
+					<span
+					  className="ml-3 cursor-pointer text-xl"
+					  title="Toggle Focus"
+					  onClick={() => handleToggleFocus(task)}
+					>
+					  {focusEmoji}
+					</span>
 				  </div>
 
-				  {/* Focus toggle => ☀️ or 💤 */}
-				  <span
-					className="ml-3 cursor-pointer text-xl"
-					onClick={() => handleToggleFocus(parent)}
-					title='Toggle Focus'
-				  >
-					{isFocus ? "☀️" : "💤"}
-				  </span>
-				</div>
-
-				{/* Completed date if needed */}
-				{isCompleted && completedTime && (
-				  <p className="text-xs text-gray-500 ml-6 mt-1">
-					Completed on {new Date(completedTime).toLocaleString()}
-				  </p>
-				)}
-
-				{/* Idea link */}
-				{idea && (
-				  <div className="ml-6 mt-1">
-					<Link
-					  to={`/ideas/${idea.fields.IdeaID}`}
-					  className="text-sm text-blue-600 underline"
-					>
-					  {idea.fields.IdeaTitle || "(Untitled Idea)"}
-					</Link>
-				  </div>
-				)}
-
-				{/* Incomplete subtasks */}
-				{incSubs.length > 0 && (
-				  <ul
-					className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y"
-					ref={(el) => (subtaskRefs.current[parent.id] = el)}
-				  >
-					{incSubs.map((sub) => {
-					  const subCompleted = !!sub.fields.Completed;
-					  const isEditingSub = (editingTaskId === sub.id);
-					  const subFocus = (sub.fields.Focus === "today");
-					  const subTime = sub.fields.CompletedTime || null;
-
-					  return (
-						<li key={sub.id} className="py-2 pr-2">
-						  <div className="flex items-center">
-							<div
-							  className="sub-drag-handle mr-2 text-gray-400 cursor-grab active:cursor-grabbing"
-							  title="Drag to reorder subtasks"
-							>
-							  ⇅
-							</div>
-							<input
-							  type="checkbox"
-							  checked={subCompleted}
-							  onChange={() => handleToggleCompleted(sub)}
-							  className="mr-3"
-							/>
-
-							{/* sub inline-edit */}
-							<div className="flex-1">
-							  {isEditingSub ? (
-								<input
-								  autoFocus
-								  type="text"
-								  className="border-b border-gray-300 focus:outline-none"
-								  value={editingTaskName}
-								  onChange={(e) => setEditingTaskName(e.target.value)}
-								  onBlur={() => commitTaskEdit(sub)}
-								  onKeyDown={(e) => {
-									if (e.key === "Enter") commitTaskEdit(sub);
-									else if (e.key === "Escape") cancelEditingTask();
-								  }}
-								/>
-							  ) : (
-								<span
-								  className={subCompleted ? "line-through text-gray-500" : ""}
-								  onClick={() => startEditingTask(sub)}
-								>
-								  {sub.fields.TaskName || "(Untitled Subtask)"}
-								</span>
-							  )}
-							</div>
-
-							<span
-							  className="ml-3 cursor-pointer text-xl"
-							  onClick={() => handleToggleFocus(sub)}
-							  title='Toggle Focus'
-							>
-							  {subFocus ? "☀️" : "💤"}
-							</span>
-						  </div>
-						  {subCompleted && subTime && (
-							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
-							</p>
-						  )}
-						</li>
-					  );
-					})}
-				  </ul>
-				)}
-
-				{/* Completed subtasks */}
-				{compSubs.length > 0 && (
-				  <ul className="mt-1 ml-6 pl-3 border-l border-gray-200 divide-y">
-					{compSubs.map((sub) => {
-					  const subTime = sub.fields.CompletedTime || null;
-					  const subFocus = (sub.fields.Focus === "today");
-					  const isEditingSub = (editingTaskId === sub.id);
-
-					  return (
-						<li key={sub.id} className="py-2 pr-2 flex flex-col">
-						  <div className="flex items-center">
-							<input
-							  type="checkbox"
-							  checked={true}
-							  onChange={() => handleToggleCompleted(sub)}
-							  className="mr-3"
-							/>
-							<div className="flex-1">
-							  {isEditingSub ? (
-								<input
-								  autoFocus
-								  type="text"
-								  className="border-b border-gray-300 focus:outline-none"
-								  value={editingTaskName}
-								  onChange={(e) => setEditingTaskName(e.target.value)}
-								  onBlur={() => commitTaskEdit(sub)}
-								  onKeyDown={(e) => {
-									if (e.key === "Enter") commitTaskEdit(sub);
-									else if (e.key === "Escape") cancelEditingTask();
-								  }}
-								/>
-							  ) : (
-								<span
-								  className="line-through text-gray-500"
-								  onClick={() => startEditingTask(sub)}
-								>
-								  {sub.fields.TaskName || "(Untitled Subtask)"}
-								</span>
-							  )}
-							</div>
-							<span
-							  className="ml-3 cursor-pointer text-xl"
-							  onClick={() => handleToggleFocus(sub)}
-							  title='Toggle Focus'
-							>
-							  {subFocus ? "☀️" : "💤"}
-							</span>
-						  </div>
-						  {subTime && (
-							<p className="text-xs text-gray-500 ml-6 mt-1">
-							  Completed on {new Date(subTime).toLocaleString()}
-							</p>
-						  )}
-						</li>
-					  );
-					})}
-				  </ul>
-				)}
-			  </li>
-			);
-		  })}
-		</ul>
-	  )}
-
-	  {/* COMPLETED PARENTS */}
-	  {completedParents.length > 0 && (
-		<ul className="divide-y border rounded">
-		  {completedParents.map((parent) => {
-			const completedTime = parent.fields.CompletedTime || null;
-			const isFocusToday = (parent.fields.Focus === "today");
-			const isEditingThis = (editingTaskId === parent.id);
-
-			const milestone = findMilestoneForTask(parent);
-			const idea = findIdeaForTask(parent);
-
-			const incSubs = getIncompleteSubtasks(parent);
-			const compSubs = getCompletedSubtasks(parent);
-
-			return (
-			  <li key={parent.id} className="p-3 flex flex-col hover:bg-gray-50">
-				{/* If there's a milestone => show name + “Edit” link, else “+ Add Milestone” */}
-				<div className="mb-1 inline-flex items-center ml-6">
-				  {milestone ? (
-					<div className="group">
-					  <span className="text-sm text-blue-700 font-semibold">
-						🏔{" "}
-						<Link
-						  to={`/milestones/${milestone.fields.MilestoneID}`}
-						  className="underline"
-						>
-						  {milestone.fields.MilestoneName || "(Unnamed Milestone)"}
-						</Link>
-					  </span>
-					  <span
-						className="
-						  ml-2 text-xs text-blue-600 underline cursor-pointer
-						  hidden group-hover:inline-block
-						"
-						onClick={() => handlePickMilestone(parent)}
-					  >
-						Edit
-					  </span>
-					</div>
-				  ) : (
-					<button
-					  className="text-xs text-blue-600 underline"
-					  onClick={() => handlePickMilestone(parent)}
-					>
-					  + Add Milestone
-					</button>
+				  {completedTime && (
+					<p className="ml-6 mt-1 text-xs text-gray-500">
+					  Completed on {new Date(completedTime).toLocaleString()}
+					</p>
 				  )}
-				</div>
 
-				<div className="flex items-center">
-				  <input
-					type="checkbox"
-					checked={true}
-					onChange={() => handleToggleCompleted(parent)}
-					className="mr-3"
-				  />
-
-				  {/* Inline edit */}
-				  <div className="flex-1">
-					{isEditingThis ? (
-					  <input
-						autoFocus
-						type="text"
-						className="border-b border-gray-300 focus:outline-none"
-						value={editingTaskName}
-						onChange={(e) => setEditingTaskName(e.target.value)}
-						onBlur={() => commitTaskEdit(parent)}
-						onKeyDown={(e) => {
-						  if (e.key === "Enter") commitTaskEdit(parent);
-						  else if (e.key === "Escape") cancelEditingTask();
-						}}
-					  />
-					) : (
-					  <span
-						className="line-through text-gray-500"
-						onClick={() => startEditingTask(parent)}
-					  >
-						{parent.fields.TaskName || "(Untitled Task)"}
-					  </span>
-					)}
-				  </div>
-
-				  <span
-					className="ml-3 cursor-pointer text-xl"
-					onClick={() => handleToggleFocus(parent)}
-					title='Toggle Focus'
-				  >
-					{isFocusToday ? "☀️" : "💤"}
-				  </span>
-				</div>
-
-				{completedTime && (
-				  <p className="text-xs text-gray-500 ml-6 mt-1">
-					Completed on {new Date(completedTime).toLocaleString()}
-				  </p>
-				)}
-
-				{idea && (
 				  <div className="ml-6 mt-1">
-					<Link
-					  to={`/ideas/${idea.fields.IdeaID}`}
-					  className="text-sm text-blue-600 underline"
+					<span
+					  className="text-xs text-blue-600 underline cursor-pointer"
+					  onClick={() => handlePickMilestone(task)}
 					>
-					  {idea.fields.IdeaTitle || "(Untitled Idea)"}
-					</Link>
+					  {milestoneName ? milestoneName : "+ Add Milestone"}
+					</span>
 				  </div>
-				)}
-
-				{/* incomplete & completed subtasks */}
-				{incSubs.length > 0 && (
-				  <ul className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y">
-					{incSubs.map((sub) => {
-					  const isEditingSub = (editingTaskId === sub.id);
-					  const subCompleted = !!sub.fields.Completed;
-
-					  return (
-						<li key={sub.id} className="py-2 pr-2 flex items-center">
-						  <input
-							type="checkbox"
-							checked={subCompleted}
-							onChange={() => handleToggleCompleted(sub)}
-							className="mr-3"
-						  />
-						  {isEditingSub ? (
-							<input
-							  autoFocus
-							  type="text"
-							  className="border-b border-gray-300 focus:outline-none"
-							  value={editingTaskName}
-							  onChange={(e) => setEditingTaskName(e.target.value)}
-							  onBlur={() => commitTaskEdit(sub)}
-							  onKeyDown={(e) => {
-								if (e.key === "Enter") commitTaskEdit(sub);
-								else if (e.key === "Escape") cancelEditingTask();
-							  }}
-							/>
-						  ) : (
-							<span
-							  className={
-								subCompleted ? "line-through text-gray-500" : ""
-							  }
-							  onClick={() => startEditingTask(sub)}
-							>
-							  {sub.fields.TaskName || "(Untitled Subtask)"}
-							</span>
-						  )}
-						</li>
-					  );
-					})}
-				  </ul>
-				)}
-
-				{compSubs.length > 0 && (
-				  <ul className="mt-2 ml-6 pl-3 border-l border-gray-200 divide-y">
-					{compSubs.map((sub) => {
-					  const isEditingSub = (editingTaskId === sub.id);
-
-					  return (
-						<li key={sub.id} className="py-2 pr-2 flex flex-col">
-						  <div className="flex items-center">
-							<input
-							  type="checkbox"
-							  checked={true}
-							  onChange={() => handleToggleCompleted(sub)}
-							  className="mr-3"
-							/>
-							{isEditingSub ? (
-							  <input
-								autoFocus
-								type="text"
-								className="border-b border-gray-300 focus:outline-none"
-								value={editingTaskName}
-								onChange={(e) => setEditingTaskName(e.target.value)}
-								onBlur={() => commitTaskEdit(sub)}
-								onKeyDown={(e) => {
-								  if (e.key === "Enter") commitTaskEdit(sub);
-								  else if (e.key === "Escape") cancelEditingTask();
-								}}
-							  />
-							) : (
-							  <span
-								className="line-through text-gray-500"
-								onClick={() => startEditingTask(sub)}
-							  >
-								{sub.fields.TaskName || "(Untitled Subtask)"}
-							  </span>
-							)}
-						  </div>
-						</li>
-					  );
-					})}
-				  </ul>
-				)}
-			  </li>
-			);
-		  })}
-		</ul>
+				</li>
+			  );
+			})}
+		  </ul>
+		</>
 	  )}
 	</div>
   );

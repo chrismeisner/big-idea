@@ -1,10 +1,7 @@
-// File: /src/MilestoneDetail.js
-
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getAuth } from "firebase/auth";
-// import airtableBase from "./airtable"; // not strictly necessary if we do fetch calls
-// import { ... } from "firebase/..."; // if you need more from Firebase
+import MilestoneModal from "./MilestoneModal";
 
 function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
   if (totalTasks === 0) {
@@ -47,9 +44,9 @@ function MilestoneDetail({ airtableUser }) {
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
   const userId = airtableUser?.fields?.UserID || null;
 
-  // ------------------------------------------------------------
-  // 1) Fetch milestone + tasks + ideas for current user
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // 1) Fetch milestone + tasks + ideas
+  // --------------------------------------------------------------------------
   useEffect(() => {
 	async function fetchData() {
 	  if (!baseId || !apiKey) {
@@ -67,13 +64,12 @@ function MilestoneDetail({ airtableUser }) {
 		setLoading(true);
 		setError(null);
 
-		// A) Milestone => AND(MilestoneID=..., UserID=...)
+		// A) Milestone => AND(MilestoneID=..., {UserID}=...)
 		const milestoneUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
 		milestoneUrl.searchParams.set(
 		  "filterByFormula",
 		  `AND({MilestoneID}="${milestoneCustomId}", {UserID}="${userId}")`
 		);
-
 		const milestoneResp = await fetch(milestoneUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
@@ -93,7 +89,6 @@ function MilestoneDetail({ airtableUser }) {
 		// B) Tasks => all tasks for this user
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
-
 		const tasksResp = await fetch(tasksUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
@@ -105,10 +100,9 @@ function MilestoneDetail({ airtableUser }) {
 		const tasksData = await tasksResp.json();
 		setTasks(tasksData.records);
 
-		// C) Ideas => also for this user
+		// C) Ideas => for this user
 		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
 		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
-
 		const ideasResp = await fetch(ideasUrl.toString(), {
 		  headers: { Authorization: `Bearer ${apiKey}` },
 		});
@@ -127,13 +121,12 @@ function MilestoneDetail({ airtableUser }) {
 		setLoading(false);
 	  }
 	}
-
 	fetchData();
   }, [baseId, apiKey, milestoneCustomId, userId]);
 
-  // ------------------------------------------------------------
-  // 2) Countdown logic (if there's a MilestoneTime)
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // 2) Countdown logic
+  // --------------------------------------------------------------------------
   useEffect(() => {
 	if (!milestone?.fields?.MilestoneTime) return;
 
@@ -141,7 +134,9 @@ function MilestoneDetail({ airtableUser }) {
 	  const target = new Date(milestone.fields.MilestoneTime).getTime();
 	  const now = Date.now();
 	  const diff = target - now;
-	  if (diff <= 0) return "Time’s up!";
+	  if (diff <= 0) {
+		return "Time’s up!";
+	  }
 
 	  const totalSec = Math.floor(diff / 1000);
 	  const days = Math.floor(totalSec / 86400);
@@ -159,9 +154,9 @@ function MilestoneDetail({ airtableUser }) {
 	return () => clearInterval(intervalId);
   }, [milestone?.fields?.MilestoneTime]);
 
-  // ------------------------------------------------------------
-  // 3) Inline editing the milestone title
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // 3) Inline editing of milestone title => click the title itself
+  // --------------------------------------------------------------------------
   const startEditingTitle = () => {
 	setIsEditingTitle(true);
 	setEditingName(milestone?.fields?.MilestoneName || "");
@@ -224,25 +219,24 @@ function MilestoneDetail({ airtableUser }) {
 	}
   };
 
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
   // 4) Toggling "Focus" or "Completed" for tasks
-  //    (If you want to do that from here.)
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
   const handleToggleFocus = async (task) => {
-	const wasFocus = task.fields.Focus === "true";
-	const newValue = wasFocus ? "" : "true";
+	const wasFocusToday = task.fields.Focus === "today";
+	const newValue = wasFocusToday ? "" : "today";
 
-	// local
+	// local update
 	setTasks((prev) =>
 	  prev.map((t) =>
-		t.id === task.id
-		  ? { ...t, fields: { ...t.fields, Focus: newValue } }
-		  : t
+		t.id === task.id ? { ...t, fields: { ...t.fields, Focus: newValue } } : t
 	  )
 	);
 
 	// patch
 	try {
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -269,11 +263,11 @@ function MilestoneDetail({ airtableUser }) {
 	  console.error("Error toggling Focus:", err);
 	  setError("Failed to toggle Focus. Please try again.");
 
-	  // revert
+	  // revert local
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
-			? { ...t, fields: { ...t.fields, Focus: wasFocus ? "true" : "" } }
+			? { ...t, fields: { ...t.fields, Focus: task.fields.Focus } }
 			: t
 		)
 	  );
@@ -285,7 +279,7 @@ function MilestoneDetail({ airtableUser }) {
 	const newValue = !wasCompleted;
 	const newTime = newValue ? new Date().toISOString() : null;
 
-	// local
+	// local update
 	setTasks((prev) =>
 	  prev.map((t) =>
 		t.id === task.id
@@ -303,6 +297,8 @@ function MilestoneDetail({ airtableUser }) {
 
 	// patch
 	try {
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+
 	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "PATCH",
 		headers: {
@@ -330,7 +326,7 @@ function MilestoneDetail({ airtableUser }) {
 	  console.error("Error toggling Completed:", err);
 	  setError("Failed to toggle Completed. Please try again.");
 
-	  // revert
+	  // revert local
 	  setTasks((prev) =>
 		prev.map((t) =>
 		  t.id === task.id
@@ -348,47 +344,46 @@ function MilestoneDetail({ airtableUser }) {
 	}
   };
 
-  // ------------------------------------------------------------
-  // 5) Subtasks
-  //    If you want to see subtasks that do NOT have MilestoneID,
-  //    that's why we fetched all tasks for this user. 
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // 5) Subtasks => incomplete first by SubOrder, completed last by CompletedTime desc
+  // --------------------------------------------------------------------------
   function getSubtasksFor(parentTask) {
 	const parentID = parentTask.fields.TaskID || null;
 	if (!parentID) return [];
-	return tasks.filter((x) => x.fields.ParentTask === parentID);
+	const allSubs = tasks.filter((x) => x.fields.ParentTask === parentID);
+
+	const incSubs = allSubs.filter((s) => !s.fields.Completed);
+	incSubs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
+
+	const compSubs = allSubs.filter((s) => s.fields.Completed);
+	compSubs.sort((a, b) => {
+	  const tA = a.fields.CompletedTime || "";
+	  const tB = b.fields.CompletedTime || "";
+	  return tB.localeCompare(tA);
+	});
+
+	return [...incSubs, ...compSubs];
   }
 
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
   // 6) Which tasks belong to this milestone?
-  // ------------------------------------------------------------
-  // We'll filter tasks where `fields.MilestoneID === milestoneCustomId`
-  // Then gather those "primary" tasks + any subtasks for them.
-  if (milestone) {
-	// we do have the milestone record
-  }
-
-  // We'll do this after we confirm milestone is loaded
+  // --------------------------------------------------------------------------
   const milestoneTasks = milestone
 	? tasks.filter((t) => t.fields.MilestoneID === milestoneCustomId)
 	: [];
 
-  // Combine them + their subtasks into a single array for progress
+  // Overall progress calculation => tasks + subtasks
   const allMilestoneTasks = [];
   milestoneTasks.forEach((pt) => {
 	allMilestoneTasks.push(pt);
 	const subs = getSubtasksFor(pt);
 	allMilestoneTasks.push(...subs);
   });
-
   const totalTasks = allMilestoneTasks.length;
-  const completedTasks = allMilestoneTasks.filter((t) => t.fields.Completed)
-	.length;
-  const percentage =
-	totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const completedTasks = allMilestoneTasks.filter((t) => t.fields.Completed).length;
+  const percentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // We'll group tasks by Idea. So:
-  // { ideaId -> [ tasksForThatIdea ] }
+  // Group tasks by Idea => used in the UI
   const tasksByIdea = {};
   milestoneTasks.forEach((t) => {
 	const ideaKey = t.fields.IdeaID;
@@ -398,16 +393,132 @@ function MilestoneDetail({ airtableUser }) {
 	tasksByIdea[ideaKey].push(t);
   });
 
-  // Turn that into an array
+  // For each idea => separate incomplete vs completed, sort them
   const groupedData = Object.entries(tasksByIdea).map(([ideaCustomId, tasksForIdea]) => {
-	// find the Idea record
 	const ideaRecord = ideas.find((i) => i.fields.IdeaID === ideaCustomId);
-	return { ideaRecord, tasks: tasksForIdea };
+
+	// incomplete => sort by .Order
+	const incomplete = tasksForIdea.filter((tt) => !tt.fields.Completed);
+	incomplete.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
+
+	// completed => sort by CompletedTime desc
+	const completed = tasksForIdea.filter((tt) => tt.fields.Completed);
+	completed.sort((a, b) => {
+	  const tA = a.fields.CompletedTime || "";
+	  const tB = b.fields.CompletedTime || "";
+	  return tB.localeCompare(tA);
+	});
+
+	const sortedTasksForIdea = [...incomplete, ...completed];
+	return { ideaRecord, tasks: sortedTasksForIdea };
   });
 
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
+  // 7) Milestone picking
+  // --------------------------------------------------------------------------
+  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
+  const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
+
+  function handlePickMilestone(task) {
+	setActiveTaskForMilestone(task);
+	setShowMilestoneModal(true);
+  }
+
+  async function assignMilestoneToTask(milestoneRec) {
+	if (!activeTaskForMilestone) return;
+	const target = activeTaskForMilestone;
+	setShowMilestoneModal(false);
+	setActiveTaskForMilestone(null);
+
+	// local
+	setTasks((prev) =>
+	  prev.map((t) =>
+		t.id === target.id
+		  ? {
+			  ...t,
+			  fields: {
+				...t.fields,
+				MilestoneID: milestoneRec.fields.MilestoneID,
+			  },
+			}
+		  : t
+	  )
+	);
+
+	// patch
+	try {
+	  if (!baseId || !apiKey) return;
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: target.id,
+			  fields: {
+				MilestoneID: milestoneRec.fields.MilestoneID,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error (assignMilestoneToTask): ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error assigning milestone =>", err);
+	  setError("Failed to assign milestone. Please refresh.");
+	}
+  }
+
+  async function removeMilestoneFromTask(task) {
+	if (!task) return;
+	// local => clear
+	setTasks((prev) =>
+	  prev.map((t) =>
+		t.id === task.id
+		  ? { ...t, fields: { ...t.fields, MilestoneID: "" } }
+		  : t
+	  )
+	);
+
+	// patch
+	try {
+	  if (!baseId || !apiKey) return;
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: task.id,
+			  fields: { MilestoneID: "" },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error (removeMilestoneFromTask): ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error removing milestone =>", err);
+	  setError("Failed to remove milestone. Please refresh.");
+	}
+  }
+
+  // --------------------------------------------------------------------------
   // Render
-  // ------------------------------------------------------------
+  // --------------------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading milestone details...</p>;
   }
@@ -426,23 +537,33 @@ function MilestoneDetail({ airtableUser }) {
 
   return (
 	<div className="container py-6">
+	  {showMilestoneModal && (
+		<MilestoneModal
+		  allMilestones={ideas /* or your real milestone array */}
+		  onClose={() => {
+			setShowMilestoneModal(false);
+			setActiveTaskForMilestone(null);
+		  }}
+		  onSelect={assignMilestoneToTask}
+		  onRemove={() => removeMilestoneFromTask(activeTaskForMilestone)}
+		/>
+	  )}
+
 	  <Link to="/milestones" className="text-blue-600 underline">
 		&larr; Back to Milestones
 	  </Link>
 
 	  <div className="mt-4">
+		{/* If not editing => show H2 that is clickable */}
 		{!isEditingTitle ? (
-		  <h2 className="text-2xl font-bold inline-flex items-center">
+		  <h2
+			className="text-2xl font-bold cursor-pointer"
+			onClick={startEditingTitle}
+		  >
 			{MilestoneName || "(Untitled Milestone)"}
-			<span
-			  className="ml-2 text-blue-600 cursor-pointer"
-			  onClick={startEditingTitle}
-			  title="Edit Milestone Title"
-			>
-			  ✏️
-			</span>
 		  </h2>
 		) : (
+		  // If editing => show input
 		  <input
 			type="text"
 			className="text-2xl font-bold border-b border-gray-300 focus:outline-none"
@@ -496,7 +617,6 @@ function MilestoneDetail({ airtableUser }) {
 
 			return (
 			  <div key={ideaCustomId} className="p-3 border rounded">
-				{/* Idea name */}
 				{ideaRecord ? (
 				  <Link
 					to={`/ideas/${ideaCustomId}`}
@@ -512,23 +632,28 @@ function MilestoneDetail({ airtableUser }) {
 				  {tasksForIdea.map((task) => {
 					const isCompleted = task.fields.Completed || false;
 					const completedTime = task.fields.CompletedTime || null;
-					const focusOn = task.fields.Focus === "true";
+					const isFocusToday = task.fields.Focus === "today";
 
-					// gather subtasks
-					const childTasks = getSubtasksFor(task);
+					const sortedSubs = getSubtasksFor(task);
 
 					return (
 					  <li
 						key={task.id}
-						className="p-3 bg-white border rounded hover:bg-gray-50 transition"
+						className="
+						  p-3 bg-white border rounded hover:bg-gray-50 transition
+						  group flex flex-col
+						"
 					  >
 						<div className="flex items-center">
+						  {/* Completed? */}
 						  <input
 							type="checkbox"
 							className="mr-2"
 							checked={isCompleted}
 							onChange={() => handleToggleCompleted(task)}
 						  />
+
+						  {/* Task name */}
 						  <div className="flex-1">
 							<span
 							  className={
@@ -538,15 +663,28 @@ function MilestoneDetail({ airtableUser }) {
 							  {task.fields.TaskName || "(Untitled Task)"}
 							</span>
 						  </div>
-						  <div className="ml-4 flex items-center space-x-1">
-							<label className="text-sm">Focus</label>
-							<input
-							  type="checkbox"
-							  checked={focusOn}
-							  onChange={() => handleToggleFocus(task)}
-							/>
-						  </div>
+
+						  {/* Edit link => milestone modal */}
+						  <span
+							className="
+							  ml-4 text-xs text-blue-600 underline cursor-pointer
+							  hidden group-hover:inline-block
+							"
+							onClick={() => handlePickMilestone(task)}
+						  >
+							Edit
+						  </span>
+
+						  {/* Focus emoji => toggle */}
+						  <span
+							className="ml-3 cursor-pointer text-xl"
+							title="Toggle Focus"
+							onClick={() => handleToggleFocus(task)}
+						  >
+							{isFocusToday ? "☀️" : "💤"}
+						  </span>
 						</div>
+
 						{isCompleted && completedTime && (
 						  <p className="text-xs text-gray-500 ml-6 mt-1">
 							Completed on {new Date(completedTime).toLocaleString()}
@@ -554,15 +692,15 @@ function MilestoneDetail({ airtableUser }) {
 						)}
 
 						{/* Subtasks */}
-						{childTasks.length > 0 && (
+						{sortedSubs.length > 0 && (
 						  <ul className="mt-2 ml-6 border-l pl-3 border-gray-200 space-y-2">
-							{childTasks.map((sub) => {
+							{sortedSubs.map((sub) => {
 							  const subCompleted = sub.fields.Completed || false;
 							  const subCT = sub.fields.CompletedTime || null;
-							  const subFocusOn = sub.fields.Focus === "true";
+							  const subFocusToday = sub.fields.Focus === "today";
 
 							  return (
-								<li key={sub.id}>
+								<li key={sub.id} className="py-2 pr-2 flex flex-col">
 								  <div className="flex items-center">
 									<input
 									  type="checkbox"
@@ -582,14 +720,14 @@ function MilestoneDetail({ airtableUser }) {
 										  "(Untitled Subtask)"}
 									  </span>
 									</div>
-									<div className="ml-4 flex items-center space-x-1">
-									  <label className="text-sm">Focus</label>
-									  <input
-										type="checkbox"
-										checked={subFocusOn}
-										onChange={() => handleToggleFocus(sub)}
-									  />
-									</div>
+
+									<span
+									  className="ml-3 cursor-pointer text-xl"
+									  title="Toggle Focus"
+									  onClick={() => handleToggleFocus(sub)}
+									>
+									  {subFocusToday ? "☀️" : "💤"}
+									</span>
 								  </div>
 								  {subCompleted && subCT && (
 									<p className="text-xs text-gray-500 ml-6 mt-1">

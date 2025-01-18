@@ -1,3 +1,5 @@
+// File: /Users/.../src/MainContent.js
+
 import React, { useEffect, useState, useRef } from "react";
 import { getAuth } from "firebase/auth";
 import Sortable from "sortablejs";
@@ -92,9 +94,7 @@ function MainContent({ airtableUser }) {
 		setTasks(tasksData.records);
 
 		// C) Fetch Milestones => (optional) filter by userId
-		const msUrl = new URL(
-		  `https://api.airtable.com/v0/${baseId}/Milestones`
-		);
+		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
 		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
 		const milestonesResp = await fetch(msUrl.toString(), {
@@ -298,7 +298,6 @@ function MainContent({ airtableUser }) {
 
   // --------------------------------------------------------------------------
   // 6) Delete an idea by “xxx” rename
-  //    We'll define the "handleDeleteIdea" function here.
   // --------------------------------------------------------------------------
   async function handleDeleteIdea(idea) {
 	// 1) Remove from local state
@@ -385,6 +384,7 @@ function MainContent({ airtableUser }) {
 	setShowMilestoneModal(true);
   };
 
+  // -- FIXED HERE: use milestone.fields.MilestoneID (not milestone.id)
   const assignMilestoneToTask = async (milestone) => {
 	if (!activeTaskForMilestone) return;
 	console.log("[MainContent] assignMilestoneToTask => milestone:", milestone.id);
@@ -397,7 +397,8 @@ function MainContent({ airtableUser }) {
 			  ...t,
 			  fields: {
 				...t.fields,
-				MilestoneID: milestone.id,
+				// Use the custom field instead of the record ID
+				MilestoneID: milestone.fields.MilestoneID,
 			  },
 			}
 		  : t
@@ -412,26 +413,24 @@ function MainContent({ airtableUser }) {
 		"[MainContent] Patching MilestoneID to Airtable => task:",
 		activeTaskForMilestone.id
 	  );
-	  const patchResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Tasks`,
-		{
-		  method: "PATCH",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				id: activeTaskForMilestone.id,
-				fields: {
-				  MilestoneID: milestone.id,
-				},
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: activeTaskForMilestone.id,
+			  fields: {
+				// Use the custom field instead of the record ID
+				MilestoneID: milestone.fields.MilestoneID,
 			  },
-			],
-		  }),
-		}
-	  );
+			},
+		  ],
+		}),
+	  });
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `[MainContent] Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -530,7 +529,6 @@ function MainContent({ airtableUser }) {
 		}}
 		onCreateTask={createTask}
 		onPickMilestone={handlePickMilestone}
-
 		// Pass the new onDeleteIdea prop:
 		onDeleteIdea={handleDeleteIdea}
 	  />

@@ -25,6 +25,9 @@ function IdeaDetail({ airtableUser }) {
   // Creating a new top-level task
   const [newTaskName, setNewTaskName] = useState("");
 
+  // NEW: Toggle for how new tasks are inserted: 'top' or 'bottom'
+  const [newTaskPosition, setNewTaskPosition] = useState("top");
+
   // The userId from the Airtable user record
   const userId = airtableUser?.fields?.UserID || null;
 
@@ -62,8 +65,7 @@ function IdeaDetail({ airtableUser }) {
 	  setLoading(true);
 	  setError(null);
 
-	  // A) Fetch Idea by {IdeaID} = customIdeaId (still no user check here,
-	  //    since the idea might have a unique custom ID)
+	  // A) Fetch Idea by {IdeaID} = customIdeaId
 	  const ideaResp = await fetch(
 		`https://api.airtable.com/v0/${baseId}/Ideas?filterByFormula={IdeaID}="${customIdeaId}"`,
 		{ headers: { Authorization: `Bearer ${apiKey}` } }
@@ -79,7 +81,7 @@ function IdeaDetail({ airtableUser }) {
 	  }
 	  setIdea(ideaData.records[0]);
 
-	  // B) Fetch Tasks => only tasks with {IdeaID}=customIdeaId AND {UserID}=userId
+	  // B) Fetch Tasks => only tasks for {IdeaID}=customIdeaId and {UserID}=userId
 	  const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 	  tasksUrl.searchParams.set(
 		"filterByFormula",
@@ -339,7 +341,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 4) Create new top-level Task => top of uncompleted
+  // 4) Create new top-level Task => can insert at top or bottom
   // ------------------------------------------------------------------
   async function handleCreateTopLevelTask(e) {
 	e.preventDefault();
@@ -349,23 +351,34 @@ function IdeaDetail({ airtableUser }) {
 	try {
 	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
 
-	  // SHIFT uncompleted tasks => +1
 	  const top = tasks.filter((t) => !t.fields.ParentTask);
 	  const incomplete = top.filter((t) => !t.fields.Completed);
 
-	  if (incomplete.length > 0) {
-		const shifted = incomplete.map((task) => {
-		  task.fields.Order = (task.fields.Order || 0) + 1;
-		  return task;
-		});
-		const completed = top.filter((t) => t.fields.Completed);
-		const subs = tasks.filter((t) => t.fields.ParentTask);
-
-		setTasks([...shifted, ...completed, ...subs]);
-		await patchOrderToAirtable(shifted);
+	  let newOrder;
+	  if (newTaskPosition === "top") {
+		// SHIFT existing incomplete tasks by +1
+		if (incomplete.length > 0) {
+		  const shifted = incomplete.map((task) => {
+			return {
+			  ...task,
+			  fields: {
+				...task.fields,
+				Order: (task.fields.Order || 0) + 1,
+			  },
+			};
+		  });
+		  const completed = top.filter((t) => t.fields.Completed);
+		  const subs = tasks.filter((t) => t.fields.ParentTask);
+		  setTasks([...shifted, ...completed, ...subs]);
+		  await patchOrderToAirtable(shifted);
+		}
+		newOrder = 1;
+	  } else {
+		// "bottom"
+		newOrder = incomplete.length + 1;
 	  }
 
-	  // Create new at Order=1 => include userId
+	  // Create new task record in Airtable
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
@@ -379,22 +392,24 @@ function IdeaDetail({ airtableUser }) {
 				TaskName: trimmed,
 				IdeaID: idea?.fields?.IdeaID || "",
 				ParentTask: "",
-				Order: 1,
-				UserID: userId, // store the user
+				Order: newOrder,
+				UserID: userId,
 			  },
 			},
 		  ],
 		}),
 	  });
+
 	  if (!resp.ok) {
 		const airtableError = await resp.json().catch(() => ({}));
 		console.error("Airtable create task error:", airtableError);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
+
 	  const data = await resp.json();
 	  const newRec = data.records[0];
-
 	  setTasks((prev) => [...prev, { id: newRec.id, fields: newRec.fields }]);
+
 	  setNewTaskName("");
 	} catch (err) {
 	  console.error("Error creating new top-level task:", err);
@@ -403,12 +418,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 5) Delete => we removed the separate delete button approach. 
-  //    If your "xxx" approach is in place, do it in your inline editing code. 
-  // ------------------------------------------------------------------
-
-  // ------------------------------------------------------------------
-  // 6) Toggling Completed
+  // 5) Toggling Completed (deleted old #5 reference about "xxx" approach)
   // ------------------------------------------------------------------
   async function handleToggleCompleted(task) {
 	const wasCompleted = task.fields.Completed || false;
@@ -453,7 +463,9 @@ function IdeaDetail({ airtableUser }) {
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[handleToggleCompleted] error:", airtableError);
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
 	  console.error("Error toggling Completed:", err);
@@ -479,7 +491,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 7) Inline Editing
+  // 6) Inline Editing
   // ------------------------------------------------------------------
   function startEditingTask(task) {
 	setEditingTaskId(task.id);
@@ -498,12 +510,7 @@ function IdeaDetail({ airtableUser }) {
   async function commitTaskNameEdit(task) {
 	const newName = editingTaskName.trim();
 
-	// If the user typed "xxx", do your delete logic here if you want
-	if (newName.toLowerCase() === "xxx") {
-	  // e.g. deleteTask(task)
-	  cancelEditingTask();
-	  return;
-	}
+	// If user typed "xxx", you could do a delete here if desired, omitted for brevity
 
 	const updated = tasks.map((t) => {
 	  if (t.id === task.id) {
@@ -541,7 +548,9 @@ function IdeaDetail({ airtableUser }) {
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[commitTaskNameEdit] error:", airtableError);
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
 	  console.error("Error updating TaskName:", err);
@@ -552,7 +561,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 8) Toggle Focus
+  // 7) Toggle Focus
   // ------------------------------------------------------------------
   async function handleToggleFocus(task) {
 	const wasFocusToday = task.fields.Focus === "today";
@@ -595,7 +604,9 @@ function IdeaDetail({ airtableUser }) {
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[handleToggleFocus] error:", airtableError);
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
 	  console.error("Error toggling Focus:", err);
@@ -619,7 +630,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 9) Milestone picking
+  // 8) Milestone picking
   // ------------------------------------------------------------------
   function handlePickMilestone(task) {
 	setActiveTaskForMilestone(task);
@@ -670,7 +681,9 @@ function IdeaDetail({ airtableUser }) {
 	  if (!patchResp.ok) {
 		const airtableError = await patchResp.json().catch(() => ({}));
 		console.error("[assignMilestoneToTask] error:", airtableError);
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
 	  console.error("Error assigning milestone:", err);
@@ -708,7 +721,9 @@ function IdeaDetail({ airtableUser }) {
 		}),
 	  });
 	  if (!patchResp.ok) {
-		throw new Error(`Airtable error: ${patchResp.status} ${patchResp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
 	  }
 	} catch (err) {
 	  console.error("Error removing milestone:", err);
@@ -717,7 +732,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 10) Create Subtask
+  // 9) Create Subtask
   // ------------------------------------------------------------------
   async function createSubtask(parentTask) {
 	if (!parentTask) return;
@@ -729,7 +744,9 @@ function IdeaDetail({ airtableUser }) {
 	  }
 
 	  // We'll store SubOrder as childSubs.length + 1
-	  const childSubs = tasks.filter((t) => t.fields.ParentTask === parentTaskID);
+	  const childSubs = tasks.filter(
+		(t) => t.fields.ParentTask === parentTaskID
+	  );
 	  const nextSubOrder = childSubs.length + 1;
 
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
@@ -755,7 +772,9 @@ function IdeaDetail({ airtableUser }) {
 	  if (!resp.ok) {
 		const airtableError = await resp.json().catch(() => ({}));
 		console.error("[createSubtask] error:", airtableError);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+		throw new Error(
+		  `Airtable error: ${resp.status} ${resp.statusText}`
+		);
 	  }
 	  const data = await resp.json();
 	  const newRecord = data.records[0];
@@ -768,7 +787,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 11) Task progress
+  // 10) Task progress
   // ------------------------------------------------------------------
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter((t) => t.fields.Completed).length;
@@ -826,20 +845,45 @@ function IdeaDetail({ airtableUser }) {
 	  />
 
 	  {/* New top-level Task form */}
-	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex gap-2">
-		<input
-		  type="text"
-		  placeholder="New top-level task..."
-		  value={newTaskName}
-		  onChange={(e) => setNewTaskName(e.target.value)}
-		  className="border border-gray-300 rounded px-2 py-1 flex-1"
-		/>
-		<button
-		  type="submit"
-		  className="bg-green-600 text-white px-3 rounded hover:bg-green-700"
-		>
-		  Add
-		</button>
+	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex flex-col gap-2 max-w-md">
+		<div className="flex gap-2">
+		  <input
+			type="text"
+			placeholder="New top-level task..."
+			value={newTaskName}
+			onChange={(e) => setNewTaskName(e.target.value)}
+			className="border border-gray-300 rounded px-2 py-1 flex-1"
+		  />
+		  <button
+			type="submit"
+			className="bg-green-600 text-white px-3 rounded hover:bg-green-700"
+		  >
+			Add
+		  </button>
+		</div>
+
+		{/* Toggle for “Top of list” vs “Bottom of list” */}
+		<div className="flex items-center space-x-6">
+		  <label className="inline-flex items-center space-x-2">
+			<input
+			  type="radio"
+			  name="taskPosition"
+			  checked={newTaskPosition === "top"}
+			  onChange={() => setNewTaskPosition("top")}
+			/>
+			<span className="text-sm">Top of list</span>
+		  </label>
+
+		  <label className="inline-flex items-center space-x-2">
+			<input
+			  type="radio"
+			  name="taskPosition"
+			  checked={newTaskPosition === "bottom"}
+			  onChange={() => setNewTaskPosition("bottom")}
+			/>
+			<span className="text-sm">Bottom of list</span>
+		  </label>
+		</div>
 	  </form>
 
 	  <h3 className="mt-4 text-lg font-semibold">Tasks:</h3>
@@ -897,13 +941,8 @@ function IdeaDetail({ airtableUser }) {
 				  </p>
 				  <span
 					className="
-					  ml-2 
-					  text-xs 
-					  text-blue-600 
-					  underline 
-					  cursor-pointer 
-					  hidden 
-					  group-hover:inline-block
+					  ml-2 text-xs text-blue-600 underline cursor-pointer
+					  hidden group-hover:inline-block
 					"
 					onClick={() => handlePickMilestone(task)}
 				  >
@@ -1103,9 +1142,7 @@ function IdeaDetail({ airtableUser }) {
 							  <input
 								type="text"
 								value={editingTaskName}
-								onChange={(e) =>
-								  setEditingTaskName(e.target.value)
-								}
+								onChange={(e) => setEditingTaskName(e.target.value)}
 								onBlur={() => commitTaskNameEdit(sub)}
 								onKeyDown={(e) => {
 								  if (e.key === "Enter") {
