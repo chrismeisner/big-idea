@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getAuth } from "firebase/auth";
-import MilestoneModal from "./MilestoneModal";
 
 function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
   if (totalTasks === 0) {
@@ -65,7 +63,9 @@ function MilestoneDetail({ airtableUser }) {
 		setError(null);
 
 		// A) Milestone => AND(MilestoneID=..., {UserID}=...)
-		const milestoneUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
+		const milestoneUrl = new URL(
+		  `https://api.airtable.com/v0/${baseId}/Milestones`
+		);
 		milestoneUrl.searchParams.set(
 		  "filterByFormula",
 		  `AND({MilestoneID}="${milestoneCustomId}", {UserID}="${userId}")`
@@ -113,7 +113,6 @@ function MilestoneDetail({ airtableUser }) {
 		}
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
-
 	  } catch (err) {
 		console.error("Error fetching milestone detail:", err);
 		setError("Failed to load milestone data. Please try again.");
@@ -189,23 +188,26 @@ function MilestoneDetail({ airtableUser }) {
 	  });
 
 	  // patch to Airtable
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Milestones`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: milestone.id,
-			  fields: {
-				MilestoneName: trimmed,
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Milestones`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: milestone.id,
+				fields: {
+				  MilestoneName: trimmed,
+				},
 			  },
-			},
-		  ],
-		}),
-	  });
+			],
+		  }),
+		}
+	  );
 	  if (!patchResp.ok) {
 		throw new Error(
 		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
@@ -220,7 +222,94 @@ function MilestoneDetail({ airtableUser }) {
   };
 
   // --------------------------------------------------------------------------
-  // 4) Toggling "Focus" or "Completed" for tasks
+  // 4) Date/time editing modal
+  // --------------------------------------------------------------------------
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [tempDateValue, setTempDateValue] = useState("");
+
+  function formatForDateTimeLocal(dateString) {
+	// e.g. "2025-01-17T17:00"
+	if (!dateString) return "";
+	const date = new Date(dateString);
+
+	// Convert to YYYY-MM-DDTHH:mm (local time)
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, "0");
+	const day = String(date.getDate()).padStart(2, "0");
+	const hours = String(date.getHours()).padStart(2, "0");
+	const minutes = String(date.getMinutes()).padStart(2, "0");
+
+	return `${year}-${month}-${day}T${hours}:${minutes}`;
+  }
+
+  const handleDueDateClick = () => {
+	// Prepare the current date/time in a suitable format
+	if (milestone?.fields?.MilestoneTime) {
+	  setTempDateValue(formatForDateTimeLocal(milestone.fields.MilestoneTime));
+	} else {
+	  setTempDateValue("");
+	}
+	setShowDateModal(true);
+  };
+
+  const handleCancelDateChange = () => {
+	setShowDateModal(false);
+	setTempDateValue("");
+  };
+
+  const handleSaveDateChange = async () => {
+	try {
+	  // Convert the local datetime value into an ISO string
+	  const newDateISO = tempDateValue ? new Date(tempDateValue).toISOString() : null;
+
+	  // local update
+	  setMilestone((prev) => {
+		if (!prev) return null;
+		return {
+		  ...prev,
+		  fields: {
+			...prev.fields,
+			MilestoneTime: newDateISO || "",
+		  },
+		};
+	  });
+
+	  // Patch to Airtable
+	  const patchResp = await fetch(
+		`https://api.airtable.com/v0/${baseId}/Milestones`,
+		{
+		  method: "PATCH",
+		  headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		  },
+		  body: JSON.stringify({
+			records: [
+			  {
+				id: milestone.id,
+				fields: {
+				  MilestoneTime: newDateISO || "",
+				},
+			  },
+			],
+		  }),
+		}
+	  );
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error (MilestoneTime): ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("Error updating milestone due date:", err);
+	  setError("Failed to update milestone due date. Please try again.");
+	} finally {
+	  setShowDateModal(false);
+	}
+  };
+
+  // --------------------------------------------------------------------------
+  // 5) Toggling "Focus" or "Completed" for tasks
   // --------------------------------------------------------------------------
   const handleToggleFocus = async (task) => {
 	const wasFocusToday = task.fields.Focus === "today";
@@ -345,7 +434,7 @@ function MilestoneDetail({ airtableUser }) {
   };
 
   // --------------------------------------------------------------------------
-  // 5) Subtasks => incomplete first by SubOrder, completed last by CompletedTime desc
+  // 6) Subtasks => incomplete first by SubOrder, completed last by CompletedTime desc
   // --------------------------------------------------------------------------
   function getSubtasksFor(parentTask) {
 	const parentID = parentTask.fields.TaskID || null;
@@ -366,7 +455,7 @@ function MilestoneDetail({ airtableUser }) {
   }
 
   // --------------------------------------------------------------------------
-  // 6) Which tasks belong to this milestone?
+  // 7) Which tasks belong to this milestone?
   // --------------------------------------------------------------------------
   const milestoneTasks = milestone
 	? tasks.filter((t) => t.fields.MilestoneID === milestoneCustomId)
@@ -381,7 +470,8 @@ function MilestoneDetail({ airtableUser }) {
   });
   const totalTasks = allMilestoneTasks.length;
   const completedTasks = allMilestoneTasks.filter((t) => t.fields.Completed).length;
-  const percentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const percentage =
+	totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
   // Group tasks by Idea => used in the UI
   const tasksByIdea = {};
@@ -414,109 +504,6 @@ function MilestoneDetail({ airtableUser }) {
   });
 
   // --------------------------------------------------------------------------
-  // 7) Milestone picking
-  // --------------------------------------------------------------------------
-  const [showMilestoneModal, setShowMilestoneModal] = useState(false);
-  const [activeTaskForMilestone, setActiveTaskForMilestone] = useState(null);
-
-  function handlePickMilestone(task) {
-	setActiveTaskForMilestone(task);
-	setShowMilestoneModal(true);
-  }
-
-  async function assignMilestoneToTask(milestoneRec) {
-	if (!activeTaskForMilestone) return;
-	const target = activeTaskForMilestone;
-	setShowMilestoneModal(false);
-	setActiveTaskForMilestone(null);
-
-	// local
-	setTasks((prev) =>
-	  prev.map((t) =>
-		t.id === target.id
-		  ? {
-			  ...t,
-			  fields: {
-				...t.fields,
-				MilestoneID: milestoneRec.fields.MilestoneID,
-			  },
-			}
-		  : t
-	  )
-	);
-
-	// patch
-	try {
-	  if (!baseId || !apiKey) return;
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: target.id,
-			  fields: {
-				MilestoneID: milestoneRec.fields.MilestoneID,
-			  },
-			},
-		  ],
-		}),
-	  });
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error (assignMilestoneToTask): ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error assigning milestone =>", err);
-	  setError("Failed to assign milestone. Please refresh.");
-	}
-  }
-
-  async function removeMilestoneFromTask(task) {
-	if (!task) return;
-	// local => clear
-	setTasks((prev) =>
-	  prev.map((t) =>
-		t.id === task.id
-		  ? { ...t, fields: { ...t.fields, MilestoneID: "" } }
-		  : t
-	  )
-	);
-
-	// patch
-	try {
-	  if (!baseId || !apiKey) return;
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: { MilestoneID: "" },
-			},
-		  ],
-		}),
-	  });
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error (removeMilestoneFromTask): ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error removing milestone =>", err);
-	  setError("Failed to remove milestone. Please refresh.");
-	}
-  }
-
-  // --------------------------------------------------------------------------
   // Render
   // --------------------------------------------------------------------------
   if (loading) {
@@ -534,24 +521,42 @@ function MilestoneDetail({ airtableUser }) {
   }
 
   const { MilestoneTime, MilestoneNotes, MilestoneName } = milestone.fields;
+  const formattedDue = MilestoneTime ? new Date(MilestoneTime).toLocaleString() : null;
 
   return (
 	<div className="container py-6">
-	  {showMilestoneModal && (
-		<MilestoneModal
-		  allMilestones={ideas /* or your real milestone array */}
-		  onClose={() => {
-			setShowMilestoneModal(false);
-			setActiveTaskForMilestone(null);
-		  }}
-		  onSelect={assignMilestoneToTask}
-		  onRemove={() => removeMilestoneFromTask(activeTaskForMilestone)}
-		/>
-	  )}
-
 	  <Link to="/milestones" className="text-blue-600 underline">
 		&larr; Back to Milestones
 	  </Link>
+
+	  {/* DATE MODAL OVERLAY */}
+	  {showDateModal && (
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+		  <div className="bg-white p-4 rounded shadow-md w-80">
+			<h2 className="text-xl font-semibold mb-4">Edit Due Date</h2>
+			<input
+			  type="datetime-local"
+			  className="border p-2 w-full rounded"
+			  value={tempDateValue}
+			  onChange={(e) => setTempDateValue(e.target.value)}
+			/>
+			<div className="flex justify-end mt-4 space-x-2">
+			  <button
+				onClick={handleCancelDateChange}
+				className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+			  >
+				Cancel
+			  </button>
+			  <button
+				onClick={handleSaveDateChange}
+				className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+			  >
+				Save
+			  </button>
+			</div>
+		  </div>
+		</div>
+	  )}
 
 	  <div className="mt-4">
 		{/* If not editing => show H2 that is clickable */}
@@ -582,14 +587,15 @@ function MilestoneDetail({ airtableUser }) {
 		)}
 	  </div>
 
-	  {MilestoneTime && (
-		<>
-		  <p className="text-sm text-gray-600 mt-1">
-			Due: {new Date(MilestoneTime).toLocaleString()}
-		  </p>
-		  <p className="text-lg font-medium text-red-600 mt-2">{countdown}</p>
-		</>
+	  {formattedDue && (
+		<p
+		  className="text-sm text-gray-600 mt-1 underline cursor-pointer inline-block"
+		  onClick={handleDueDateClick}
+		>
+		  Due: {formattedDue}
+		</p>
 	  )}
+	  {countdown && <p className="text-lg font-medium text-red-600 mt-2">{countdown}</p>}
 
 	  {MilestoneNotes && (
 		<p className="mt-2 whitespace-pre-line">{MilestoneNotes}</p>
@@ -603,9 +609,7 @@ function MilestoneDetail({ airtableUser }) {
 	  />
 	  <hr className="my-4" />
 
-	  <h3 className="text-xl font-semibold mb-2">
-		Tasks linked to this Milestone
-	  </h3>
+	  <h3 className="text-xl font-semibold mb-2">Tasks linked to this Milestone</h3>
 
 	  {milestoneTasks.length === 0 ? (
 		<p className="text-sm text-gray-500">No tasks for this milestone yet.</p>
@@ -613,13 +617,13 @@ function MilestoneDetail({ airtableUser }) {
 		<div className="space-y-4">
 		  {groupedData.map(({ ideaRecord, tasks: tasksForIdea }) => {
 			const ideaTitle = ideaRecord?.fields?.IdeaTitle || "(Untitled Idea)";
-			const ideaCustomId = ideaRecord?.fields?.IdeaID;
+			const ideaCID = ideaRecord?.fields?.IdeaID;
 
 			return (
-			  <div key={ideaCustomId} className="p-3 border rounded">
+			  <div key={ideaCID} className="p-3 border rounded">
 				{ideaRecord ? (
 				  <Link
-					to={`/ideas/${ideaCustomId}`}
+					to={`/ideas/${ideaCID}`}
 					className="text-blue-600 underline font-semibold"
 				  >
 					{ideaTitle}
@@ -664,16 +668,16 @@ function MilestoneDetail({ airtableUser }) {
 							</span>
 						  </div>
 
-						  {/* Edit link => milestone modal */}
-						  <span
+						  {/* Dummy "Edit" link */}
+						  <a
+							href="#"
 							className="
 							  ml-4 text-xs text-blue-600 underline cursor-pointer
 							  hidden group-hover:inline-block
 							"
-							onClick={() => handlePickMilestone(task)}
 						  >
 							Edit
-						  </span>
+						  </a>
 
 						  {/* Focus emoji => toggle */}
 						  <span
@@ -687,7 +691,8 @@ function MilestoneDetail({ airtableUser }) {
 
 						{isCompleted && completedTime && (
 						  <p className="text-xs text-gray-500 ml-6 mt-1">
-							Completed on {new Date(completedTime).toLocaleString()}
+							Completed on{" "}
+							{new Date(completedTime).toLocaleString()}
 						  </p>
 						)}
 
