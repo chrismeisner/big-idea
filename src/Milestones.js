@@ -1,13 +1,13 @@
 // File: /src/Milestones.js
 
 import React, { useEffect, useState } from "react";
-import { getAuth } from "firebase/auth";
 import { Link } from "react-router-dom";
 
 function Milestones({ airtableUser }) {
   const [milestones, setMilestones] = useState([]);
   const [tasks, setTasks] = useState([]);
 
+  // For creating a new milestone
   const [newMilestoneName, setNewMilestoneName] = useState("");
   const [newMilestoneTime, setNewMilestoneTime] = useState("");
   const [newMilestoneNotes, setNewMilestoneNotes] = useState("");
@@ -19,7 +19,7 @@ function Milestones({ airtableUser }) {
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // Get the current user's ID from Airtable record
+  // Get current user's ID from the Airtable record
   const userId = airtableUser?.fields?.UserID || null;
 
   useEffect(() => {
@@ -39,9 +39,8 @@ function Milestones({ airtableUser }) {
 		setLoading(true);
 		setError(null);
 
-		// 1) Fetch Milestones => only for this user, sorted by MilestoneTime ascending
+		// 1) Fetch Milestones (for this user), sorted by MilestoneTime ascending
 		const msUrl = new URL(`https://api.airtable.com/v0/${baseId}/Milestones`);
-		// Sort by MilestoneTime ascending => earliest at top
 		msUrl.searchParams.set("sort[0][field]", "MilestoneTime");
 		msUrl.searchParams.set("sort[0][direction]", "asc");
 		msUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
@@ -56,7 +55,7 @@ function Milestones({ airtableUser }) {
 		}
 		const milestonesData = await milestonesResp.json();
 
-		// 2) Fetch Tasks => also for this user
+		// 2) Fetch Tasks (also for this user)
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
@@ -102,7 +101,7 @@ function Milestones({ airtableUser }) {
 	try {
 	  const fieldsToWrite = {
 		MilestoneName: newMilestoneName,
-		UserID: userId, // Important: store the current user's ID
+		UserID: userId, // store current user's ID
 	  };
 	  if (newMilestoneTime) {
 		fieldsToWrite.MilestoneTime = newMilestoneTime;
@@ -137,10 +136,10 @@ function Milestones({ airtableUser }) {
 	  const createdRecord = data.records[0];
 	  console.log("Milestone created:", createdRecord);
 
-	  // Insert into local state so the new milestone appears immediately
+	  // Insert new milestone into local state
 	  setMilestones((prev) => [createdRecord, ...prev]);
 
-	  // Reset the form
+	  // Clear the form
 	  setNewMilestoneName("");
 	  setNewMilestoneTime("");
 	  setNewMilestoneNotes("");
@@ -225,20 +224,19 @@ function Milestones({ airtableUser }) {
 		</button>
 	  </form>
 
-	  {/* Show existing milestones */}
+	  {/* Existing milestones */}
 	  {milestones.length > 0 ? (
 		<ul className="divide-y divide-gray-200 border rounded">
 		  {milestones.map((m) => {
 			const { MilestoneName, MilestoneTime, MilestoneID } = m.fields;
 
-			// Filter tasks that have fields.MilestoneID === this milestone's custom ID
+			// Filter tasks for this milestone
 			const tasksForThisMilestone = tasks.filter(
 			  (t) => t.fields.MilestoneID === MilestoneID
 			);
 
 			return (
 			  <li key={m.id} className="p-3 hover:bg-gray-50">
-				{/* Link to the milestone detail page */}
 				<Link
 				  to={`/milestones/${MilestoneID}`}
 				  className="text-blue-600 underline font-semibold"
@@ -254,22 +252,55 @@ function Milestones({ airtableUser }) {
 
 				{tasksForThisMilestone.length > 0 ? (
 				  <ul className="mt-2 pl-4 list-disc text-sm">
-					{tasksForThisMilestone.map((task) => {
-					  const taskName = task.fields.TaskName || "(Untitled Task)";
-					  const isCompleted = task.fields.Completed;
-
-					  return (
-						<li key={task.id}>
-						  {isCompleted ? (
-							<span className="line-through text-gray-500">
-							  {taskName}
-							</span>
-						  ) : (
-							taskName
-						  )}
-						</li>
+					{(() => {
+					  // Separate incomplete vs. completed
+					  const incomplete = tasksForThisMilestone.filter(
+						(t) => !t.fields.Completed
 					  );
-					})}
+					  const completed = tasksForThisMilestone.filter(
+						(t) => t.fields.Completed
+					  );
+
+					  // Sort incomplete by Order (asc)
+					  incomplete.sort(
+						(a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
+					  );
+
+					  // Sort completed by CompletedTime (desc)
+					  completed.sort((a, b) => {
+						const aTime = a.fields.CompletedTime || "";
+						const bTime = b.fields.CompletedTime || "";
+						return bTime.localeCompare(aTime);
+					  });
+
+					  // Merge
+					  const sortedTasks = [...incomplete, ...completed];
+
+					  // Render sorted tasks
+					  return sortedTasks.map((task) => {
+						const taskName =
+						  task.fields.TaskName || "(Untitled Task)";
+						const isCompleted = task.fields.Completed;
+						const completedTime = task.fields.CompletedTime;
+
+						return (
+						  <li key={task.id}>
+							{isCompleted ? (
+							  <span className="line-through text-gray-500">
+								{taskName}
+							  </span>
+							) : (
+							  taskName
+							)}
+							{isCompleted && completedTime && (
+							  <span className="ml-2 text-xs text-gray-400">
+								(Done {new Date(completedTime).toLocaleString()})
+							  </span>
+							)}
+						  </li>
+						);
+					  });
+					})()}
 				  </ul>
 				) : (
 				  <p className="text-sm text-gray-500 mt-2">
@@ -288,4 +319,3 @@ function Milestones({ airtableUser }) {
 }
 
 export default Milestones;
-

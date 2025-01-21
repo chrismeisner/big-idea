@@ -1,5 +1,3 @@
-// File: /src/TodayView.js
-
 import React, {
   useEffect,
   useState,
@@ -14,15 +12,45 @@ import MilestoneModal from "./MilestoneModal";
 
 function TodayView({ airtableUser }) {
   // ------------------------------------------------------------------
-  // 0) Daily countdown to 4:20 PM
+  // 0) State for daily countdown to user’s chosen time
   // ------------------------------------------------------------------
   const [dailyCountdown, setDailyCountdown] = useState("");
 
+  // New states for editing user’s daily time
+  const [showEditTime, setShowEditTime] = useState(false);
+  const [tempTime, setTempTime] = useState("");   // hold time while editing
+  const [todayTime, setTodayTime] = useState("16:20"); // fallback to 4:20 PM
+
+  // ------------------------------------------------------------------
+  // 1) Load user’s TodayTime from the "Users" table (via airtableUser)
+  // ------------------------------------------------------------------
+  useEffect(() => {
+	if (airtableUser && airtableUser.fields.TodayTime) {
+	  setTodayTime(airtableUser.fields.TodayTime); // e.g. "15:30"
+	} else {
+	  setTodayTime("16:20");
+	}
+  }, [airtableUser]);
+
+  // ------------------------------------------------------------------
+  // 2) Countdown logic, using `todayTime` instead of hardcoded 4:20
+  // ------------------------------------------------------------------
   useEffect(() => {
 	function getTargetTime() {
 	  const now = new Date();
-	  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 16, 20, 0, 0);
-	  if (target < now) {
+	  const [hours, minutes] = todayTime.split(":").map(Number);
+
+	  const target = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+		hours,
+		minutes,
+		0,
+		0
+	  );
+	  if (target <= now) {
+		// If the chosen time is already past for today, add 1 day
 		target.setDate(target.getDate() + 1);
 	  }
 	  return target;
@@ -45,26 +73,74 @@ function TodayView({ airtableUser }) {
 	  if (days > 0 || hours > 0) result += `${hours}h `;
 	  result += `${mins}m ${secs}s`;
 
-	  setDailyCountdown(result + " until 4:20pm");
+	  setDailyCountdown(result + ` until ${todayTime}`);
 	}
 
 	updateCountdown();
 	const timerId = setInterval(updateCountdown, 1000);
 	return () => clearInterval(timerId);
-  }, []);
+  }, [todayTime]);
 
   // ------------------------------------------------------------------
-  // 1) State
+  // 3) Updating user’s chosen time => patch to Airtable
+  // ------------------------------------------------------------------
+  const [error, setError] = useState(null);
+
+  const handleSaveTimeChange = async () => {
+	// 1) Local update so it takes effect immediately
+	setTodayTime(tempTime);
+	setShowEditTime(false);
+
+	// 2) PATCH to Airtable => user’s "TodayTime" field
+	try {
+	  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
+	  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+	  if (!airtableUser) throw new Error("No user record to patch.");
+
+	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Users`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: airtableUser.id, // The user’s Airtable record ID
+			  fields: {
+				TodayTime: tempTime,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!patchResp.ok) {
+		throw new Error(
+		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("[TodayView] Error updating TodayTime:", err);
+	  setError("Failed to update daily time. Please refresh.");
+	}
+  };
+
+  // ------------------------------------------------------------------
+  // 4) Remaining state/logic for tasks, ideas, etc.
   // ------------------------------------------------------------------
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
   const [milestones, setMilestones] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  // Inline editing
+  // Inline editing for TaskName
   const [editingTaskId, setEditingTaskId] = useState(null);
   const [editingTaskName, setEditingTaskName] = useState("");
+
+  // Inline editing for TaskNote
+  const [editingNotesTaskId, setEditingNotesTaskId] = useState(null);
+  const [editingNotesText, setEditingNotesText] = useState("");
 
   // Milestone modal
   const [showMilestoneModal, setShowMilestoneModal] = useState(false);
@@ -80,22 +156,7 @@ function TodayView({ airtableUser }) {
   const sortableRef = useRef(null);
 
   // ------------------------------------------------------------------
-  // 2) Helpers for idea & milestone
-  // ------------------------------------------------------------------
-  function findIdeaTitle(task) {
-	if (!task?.fields?.IdeaID) return "";
-	const found = ideas.find((i) => i.fields.IdeaID === task.fields.IdeaID);
-	return found?.fields?.IdeaTitle || "";
-  }
-
-  function findMilestoneName(task) {
-	if (!task?.fields?.MilestoneID) return "";
-	const rec = milestones.find((m) => m.fields.MilestoneID === task.fields.MilestoneID);
-	return rec?.fields?.MilestoneName || "";
-  }
-
-  // ------------------------------------------------------------------
-  // 3) Fetch tasks (Focus="today"), plus ideas + milestones
+  // 5) fetch tasks (Focus="today"), plus ideas + milestones
   // ------------------------------------------------------------------
   useEffect(() => {
 	if (!userId) {
@@ -112,7 +173,6 @@ function TodayView({ airtableUser }) {
 	async function fetchData() {
 	  try {
 		setLoading(true);
-
 		const auth = getAuth();
 		const currentUser = auth.currentUser;
 		if (!currentUser) {
@@ -165,7 +225,6 @@ function TodayView({ airtableUser }) {
 		}
 		const msData = await msResp.json();
 		setMilestones(msData.records);
-
 	  } catch (err) {
 		console.error("[TodayView] Error fetching data:", err);
 		setError(err.message || "Failed to load tasks for Today.");
@@ -178,12 +237,11 @@ function TodayView({ airtableUser }) {
   }, [userId, baseId, apiKey]);
 
   // ------------------------------------------------------------------
-  // 4) Sortable for incomplete tasks
+  // 6) Sortable for incomplete tasks
   // ------------------------------------------------------------------
   useLayoutEffect(() => {
 	if (!loading && tasks.length > 0 && incompleteListRef.current && !sortableRef.current) {
 	  const incomplete = tasks.filter((t) => !t.fields.Completed);
-
 	  if (incomplete.length > 0) {
 		sortableRef.current = new Sortable(incompleteListRef.current, {
 		  animation: 150,
@@ -211,7 +269,7 @@ function TodayView({ airtableUser }) {
 
 	// reassign .OrderToday
 	updated.forEach((item, idx) => {
-	  item.fields.OrderToday = idx + 1; 
+	  item.fields.OrderToday = idx + 1;
 	});
 
 	// rebuild tasks array
@@ -249,7 +307,7 @@ function TodayView({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 5) Toggling Completed / Focus
+  // 7) Toggling Completed / Focus
   // ------------------------------------------------------------------
   const handleToggleCompleted = async (task) => {
 	const wasCompleted = !!task.fields.Completed;
@@ -368,18 +426,16 @@ function TodayView({ airtableUser }) {
   };
 
   // ------------------------------------------------------------------
-  // 6) Inline editing => rename or "xxx" => delete
+  // 8) Inline editing => rename or "xxx" => delete (TaskName)
   // ------------------------------------------------------------------
   function startEditingTask(task) {
 	setEditingTaskId(task.id);
 	setEditingTaskName(task.fields.TaskName || "");
   }
-
   function cancelEditingTask() {
 	setEditingTaskId(null);
 	setEditingTaskName("");
   }
-
   async function commitTaskEdit(task) {
 	const trimmed = editingTaskName.trim();
 	if (!trimmed) {
@@ -433,6 +489,65 @@ function TodayView({ airtableUser }) {
 	}
   }
 
+  // ------------------------------------------------------------------
+  // 9) Inline editing => notes
+  // ------------------------------------------------------------------
+  function startEditingNotes(task) {
+	setEditingNotesTaskId(task.id);
+	setEditingNotesText(task.fields.TaskNote || "");
+  }
+  function cancelEditingNotes() {
+	setEditingNotesTaskId(null);
+	setEditingNotesText("");
+  }
+  async function commitNotesEdit(task) {
+	const trimmed = editingNotesText.trim();
+	// If user clears it out, that’s OK—just store empty string
+	// If user typed "xxx" => not necessarily a delete, but we can allow it
+	// (No special rule here unless you want to interpret "xxx" in some way.)
+
+	// local
+	setTasks((prev) =>
+	  prev.map((t) =>
+		t.id === task.id
+		  ? { ...t, fields: { ...t.fields, TaskNote: trimmed } }
+		  : t
+	  )
+	);
+
+	try {
+	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
+	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "PATCH",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  id: task.id,
+			  fields: { TaskNote: trimmed },
+			},
+		  ],
+		}),
+	  });
+	  if (!resp.ok) {
+		throw new Error(
+		  `Airtable error: ${resp.status} ${resp.statusText}`
+		);
+	  }
+	} catch (err) {
+	  console.error("[TodayView] commitNotesEdit =>", err);
+	  setError("Failed to update notes. Please try again.");
+	} finally {
+	  cancelEditingNotes();
+	}
+  }
+
+  // ------------------------------------------------------------------
+  // 10) Deleting a task
+  // ------------------------------------------------------------------
   async function deleteTask(task) {
 	setTasks((prev) => prev.filter((t) => t.id !== task.id));
 
@@ -453,7 +568,7 @@ function TodayView({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 7) Milestone assignment
+  // 11) Milestone assignment
   // ------------------------------------------------------------------
   function handlePickMilestone(task) {
 	setActiveTaskForMilestone(task);
@@ -551,7 +666,7 @@ function TodayView({ airtableUser }) {
   }
 
   // ------------------------------------------------------------------
-  // 8) Today’s progress stats & partition tasks
+  // 12) Partition tasks into incomplete vs completed
   // ------------------------------------------------------------------
   const totalTasks = tasks.length;
   const completedCount = tasks.filter((t) => t.fields.Completed).length;
@@ -579,9 +694,49 @@ function TodayView({ airtableUser }) {
   if (error) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
+
+  // If no tasks at all, still show countdown + an empty message
   if (tasks.length === 0) {
 	return (
 	  <div className="m-4">
+		{/* Countdown row => with hover 'edit' link */}
+		<div className="mb-2 text-sm text-red-600 font-semibold relative group inline-block">
+		  {dailyCountdown}
+		  <span
+			className="opacity-0 group-hover:opacity-100 ml-2 text-blue-600 underline cursor-pointer"
+			onClick={() => {
+			  setTempTime(todayTime);
+			  setShowEditTime(true);
+			}}
+		  >
+			edit
+		  </span>
+
+		  {/* Time picker + Save if we're editing */}
+		  {showEditTime && (
+			<div className="mt-2 bg-white p-2 border rounded shadow inline-block">
+			  <input
+				type="time"
+				value={tempTime}
+				onChange={(e) => setTempTime(e.target.value)}
+				className="border p-1 rounded"
+			  />
+			  <button
+				onClick={handleSaveTimeChange}
+				className="ml-2 px-3 py-1 bg-blue-600 text-white rounded"
+			  >
+				Save
+			  </button>
+			  <button
+				onClick={() => setShowEditTime(false)}
+				className="ml-1 text-sm text-gray-600 underline"
+			  >
+				Cancel
+			  </button>
+			</div>
+		  )}
+		</div>
+
 		<p>No tasks with Focus="today".</p>
 	  </div>
 	);
@@ -602,9 +757,42 @@ function TodayView({ airtableUser }) {
 		/>
 	  )}
 
-	  {/* Daily Countdown */}
-	  <div className="mb-2 text-sm text-red-600 font-semibold">
+	  {/* Countdown row => with hover 'edit' link */}
+	  <div className="mb-2 text-sm text-red-600 font-semibold relative group inline-block">
 		{dailyCountdown}
+		<span
+		  className="opacity-0 group-hover:opacity-100 ml-2 text-blue-600 underline cursor-pointer"
+		  onClick={() => {
+			setTempTime(todayTime);
+			setShowEditTime(true);
+		  }}
+		>
+		  edit
+		</span>
+
+		{/* Time picker + Save if user is editing */}
+		{showEditTime && (
+		  <div className="mt-2 bg-white p-2 border rounded shadow inline-block">
+			<input
+			  type="time"
+			  value={tempTime}
+			  onChange={(e) => setTempTime(e.target.value)}
+			  className="border p-1 rounded"
+			/>
+			<button
+			  onClick={handleSaveTimeChange}
+			  className="ml-2 px-3 py-1 bg-blue-600 text-white rounded"
+			>
+			  Save
+			</button>
+			<button
+			  onClick={() => setShowEditTime(false)}
+			  className="ml-1 text-sm text-gray-600 underline"
+			>
+			  Cancel
+			</button>
+		  </div>
+		)}
 	  </div>
 
 	  <h2 className="text-2xl font-bold mb-2">Today's Tasks</h2>
@@ -613,7 +801,6 @@ function TodayView({ airtableUser }) {
 	  <p className="text-sm text-gray-600">
 		{completedCount} of {totalTasks} tasks completed ({percentage}%)
 	  </p>
-	  {/* Actual progress bar */}
 	  <div className="bg-gray-200 h-3 rounded mt-1 w-full max-w-md mb-4">
 		<div
 		  className="bg-green-500 h-3 rounded"
@@ -621,28 +808,37 @@ function TodayView({ airtableUser }) {
 		/>
 	  </div>
 
-	  {/* INCOMPLETE LIST */}
+	  {/* INCOMPLETE TASKS (sortable) */}
 	  <ul className="mb-6 border rounded divide-y" ref={incompleteListRef}>
-		{incompleteTasks.map((task, idx) => {
-		  const isFirstItem = idx === 0;
-		  const isEditing = editingTaskId === task.id;
+		{incompleteTasks.map((task) => {
+		  const isEditingName = editingTaskId === task.id;
+		  const isEditingNotes = editingNotesTaskId === task.id;
+
 		  const isCompleted = !!task.fields.Completed;
 		  const completedTime = task.fields.CompletedTime || null;
 
-		  const ideaTitle = findIdeaTitle(task);
-		  const milestoneName = findMilestoneName(task);
+		  // Grab the related Idea record
+		  const ideaRecord = ideas.find(
+			(i) => i.fields.IdeaID === task.fields.IdeaID
+		  );
+		  const ideaTitle = ideaRecord?.fields.IdeaTitle || "";
+		  const ideaCID = ideaRecord?.fields.IdeaID;
 
-		  const rowClasses = isFirstItem
-			? "p-3 bg-amber-100 flex flex-col group"
-			: "p-3 hover:bg-gray-50 flex flex-col group";
+		  // Grab the related Milestone
+		  const milestoneRecord = milestones.find(
+			(m) => m.fields.MilestoneID === task.fields.MilestoneID
+		  );
+		  const milestoneName = milestoneRecord?.fields.MilestoneName || "";
 
-		  // Check if Focus = "today" => show ☀️, else 💤
+		  // Focus
 		  const isFocus = (task.fields.Focus === "today");
 		  const focusEmoji = isFocus ? "☀️" : "💤";
 
 		  return (
-			<li key={task.id} className={rowClasses}>
+			<li key={task.id} className="p-3 hover:bg-gray-50 flex flex-col group">
+			  {/* FIRST LINE => TaskName, Idea link, Focus toggle */}
 			  <div className="flex items-center">
+				{/* Draggable handle */}
 				<div
 				  className="drag-handle mr-2 text-gray-400 cursor-grab active:cursor-grabbing"
 				  title="Drag to reorder"
@@ -650,6 +846,7 @@ function TodayView({ airtableUser }) {
 				  ⇅
 				</div>
 
+				{/* Completed checkbox */}
 				<input
 				  type="checkbox"
 				  className="mr-2"
@@ -657,7 +854,8 @@ function TodayView({ airtableUser }) {
 				  onChange={() => handleToggleCompleted(task)}
 				/>
 
-				{isEditing ? (
+				{/* Inline edit (TaskName) vs read-only */}
+				{isEditingName ? (
 				  <input
 					autoFocus
 					type="text"
@@ -671,15 +869,34 @@ function TodayView({ airtableUser }) {
 					}}
 				  />
 				) : (
-				  <span
-					className="flex-1 cursor-pointer"
-					onClick={() => startEditingTask(task)}
-				  >
-					{task.fields.TaskName || "(Untitled Task)"}
-					{ideaTitle && ` (${ideaTitle})`}
-				  </span>
+				  <>
+					{/* Task Name */}
+					<span
+					  className={`flex-1 cursor-pointer ${
+						isCompleted ? "line-through text-gray-500" : ""
+					  }`}
+					  onClick={() => startEditingTask(task)}
+					>
+					  {task.fields.TaskName || "(Untitled Task)"}
+					</span>
+
+					{/* Idea Title Link in parentheses (if any) */}
+					{ideaTitle && (
+					  <Link
+						to={`/ideas/${ideaCID}`}
+						className={
+						  isCompleted
+							? "ml-1 text-sm line-through text-gray-500"
+							: "ml-1 text-sm text-blue-600 underline"
+						}
+					  >
+						({ideaTitle})
+					  </Link>
+					)}
+				  </>
 				)}
 
+				{/* Toggle Focus (emoji) */}
 				<span
 				  className="ml-3 cursor-pointer text-xl"
 				  title="Toggle Focus"
@@ -689,13 +906,60 @@ function TodayView({ airtableUser }) {
 				</span>
 			  </div>
 
+			  {/* Completed date/time if completed */}
 			  {completedTime && (
 				<p className="ml-6 mt-1 text-xs text-gray-500">
 				  Completed on {new Date(completedTime).toLocaleString()}
 				</p>
 			  )}
 
-			  {/* Milestone link => either milestoneName or "+ Add Milestone" */}
+			  {/* TaskNote (inline) => if we have notes or we’re editing */}
+			  <div className="ml-6 mt-2">
+				{isEditingNotes ? (
+				  <div>
+					<textarea
+					  className="w-full border p-1 rounded"
+					  rows={3}
+					  value={editingNotesText}
+					  onChange={(e) => setEditingNotesText(e.target.value)}
+					/>
+					<div className="mt-1 space-x-2">
+					  <button
+						onClick={() => commitNotesEdit(task)}
+						className="px-2 py-1 text-sm bg-blue-600 text-white rounded"
+					  >
+						Submit
+					  </button>
+					  <button
+						onClick={cancelEditingNotes}
+						className="px-2 py-1 text-sm bg-gray-300 rounded"
+					  >
+						Cancel
+					  </button>
+					</div>
+				  </div>
+				) : (
+				  <>
+					{task.fields.TaskNote && task.fields.TaskNote.trim().length > 0 ? (
+					  <p
+						className="text-sm text-gray-700 cursor-pointer whitespace-pre-line"
+						onClick={() => startEditingNotes(task)}
+					  >
+						{task.fields.TaskNote}
+					  </p>
+					) : (
+					  <p
+						className="text-xs text-blue-600 underline cursor-pointer"
+						onClick={() => startEditingNotes(task)}
+					  >
+						+ Add Notes
+					  </p>
+					)}
+				  </>
+				)}
+			  </div>
+
+			  {/* Milestone link */}
 			  <div className="ml-6 mt-1">
 				<span
 				  className="text-xs text-blue-600 underline cursor-pointer"
@@ -709,24 +973,37 @@ function TodayView({ airtableUser }) {
 		})}
 	  </ul>
 
-	  {/* COMPLETED LIST */}
+	  {/* COMPLETED TASKS */}
 	  {completedTasks.length > 0 && (
 		<>
 		  <h3 className="text-md font-semibold mb-2">Completed</h3>
 		  <ul className="border rounded divide-y">
 			{completedTasks.map((task) => {
-			  const isEditing = editingTaskId === task.id;
-			  const completedTime = task.fields.CompletedTime || null;
-			  const ideaTitle = findIdeaTitle(task);
-			  const milestoneName = findMilestoneName(task);
+			  const isEditingName = editingTaskId === task.id;
+			  const isEditingNotes = editingNotesTaskId === task.id;
 
-			  // Check focus
+			  const completedTime = task.fields.CompletedTime || null;
+
+			  // Grab idea + milestone
+			  const ideaRecord = ideas.find(
+				(i) => i.fields.IdeaID === task.fields.IdeaID
+			  );
+			  const ideaTitle = ideaRecord?.fields.IdeaTitle || "";
+			  const ideaCID = ideaRecord?.fields.IdeaID;
+
+			  const milestoneRecord = milestones.find(
+				(m) => m.fields.MilestoneID === task.fields.MilestoneID
+			  );
+			  const milestoneName = milestoneRecord?.fields.MilestoneName || "";
+
+			  // Focus
 			  const isFocus = (task.fields.Focus === "today");
 			  const focusEmoji = isFocus ? "☀️" : "💤";
 
 			  return (
 				<li key={task.id} className="p-3 hover:bg-gray-50 flex flex-col group">
 				  <div className="flex items-center">
+					{/* Completed checkbox */}
 					<input
 					  type="checkbox"
 					  className="mr-2"
@@ -734,7 +1011,7 @@ function TodayView({ airtableUser }) {
 					  onChange={() => handleToggleCompleted(task)}
 					/>
 
-					{isEditing ? (
+					{isEditingName ? (
 					  <input
 						autoFocus
 						type="text"
@@ -748,13 +1025,24 @@ function TodayView({ airtableUser }) {
 						}}
 					  />
 					) : (
-					  <span
-						className="flex-1 line-through text-gray-500 cursor-pointer"
-						onClick={() => startEditingTask(task)}
-					  >
-						{task.fields.TaskName || "(Untitled Task)"}
-						{ideaTitle && ` (${ideaTitle})`}
-					  </span>
+					  <>
+						<span
+						  className="flex-1 line-through text-gray-500 cursor-pointer"
+						  onClick={() => startEditingTask(task)}
+						>
+						  {task.fields.TaskName || "(Untitled Task)"}
+						</span>
+
+						{/* Idea Title Link */}
+						{ideaTitle && (
+						  <Link
+							to={`/ideas/${ideaCID}`}
+							className="ml-1 text-sm line-through text-gray-500"
+						  >
+							({ideaTitle})
+						  </Link>
+						)}
+					  </>
 					)}
 
 					<span
@@ -771,6 +1059,52 @@ function TodayView({ airtableUser }) {
 					  Completed on {new Date(completedTime).toLocaleString()}
 					</p>
 				  )}
+
+				  {/* Notes => if editing or existing text */}
+				  <div className="ml-6 mt-2">
+					{isEditingNotes ? (
+					  <div>
+						<textarea
+						  className="w-full border p-1 rounded"
+						  rows={3}
+						  value={editingNotesText}
+						  onChange={(e) => setEditingNotesText(e.target.value)}
+						/>
+						<div className="mt-1 space-x-2">
+						  <button
+							onClick={() => commitNotesEdit(task)}
+							className="px-2 py-1 text-sm bg-blue-600 text-white rounded"
+						  >
+							Submit
+						  </button>
+						  <button
+							onClick={cancelEditingNotes}
+							className="px-2 py-1 text-sm bg-gray-300 rounded"
+						  >
+							Cancel
+						  </button>
+						</div>
+					  </div>
+					) : (
+					  <>
+						{task.fields.TaskNote && task.fields.TaskNote.trim().length > 0 ? (
+						  <p
+							className="text-sm text-gray-700 cursor-pointer whitespace-pre-line"
+							onClick={() => startEditingNotes(task)}
+						  >
+							{task.fields.TaskNote}
+						  </p>
+						) : (
+						  <p
+							className="text-xs text-blue-600 underline cursor-pointer"
+							onClick={() => startEditingNotes(task)}
+						  >
+							+ Add Notes
+						  </p>
+						)}
+					  </>
+					)}
+				  </div>
 
 				  <div className="ml-6 mt-1">
 					<span
