@@ -1,7 +1,7 @@
 // File: /src/MainContent.js
-
 import React, { useEffect, useState } from "react";
 import IdeaList from "./IdeaList";
+import TurnIntoTaskModal from "./TurnIntoTaskModal"; // NEW import
 
 function MainContent({ airtableUser }) {
   const [ideas, setIdeas] = useState([]);
@@ -13,11 +13,18 @@ function MainContent({ airtableUser }) {
   const [newIdeaTitle, setNewIdeaTitle] = useState("");
   const [newIdeaSummary, setNewIdeaSummary] = useState("");
 
+  // Airtable env
   const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
   const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
 
-  // Get userId
+  // Current user
   const userId = airtableUser?.fields?.UserID || null;
+
+  // -----------------------------------------------------------------
+  // New states for "Turn into Task" modal
+  // -----------------------------------------------------------------
+  const [showTurnModal, setShowTurnModal] = useState(false);
+  const [ideaToConvert, setIdeaToConvert] = useState(null);
 
   useEffect(() => {
 	if (!userId) {
@@ -36,7 +43,7 @@ function MainContent({ airtableUser }) {
 		setLoading(true);
 		setError(null);
 
-		// A) Fetch Ideas => order by "Order"
+		// 1) Fetch Ideas => order by "Order"
 		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
 		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 		ideasUrl.searchParams.set("sort[0][field]", "Order");
@@ -53,7 +60,7 @@ function MainContent({ airtableUser }) {
 		const ideasData = await ideasResp.json();
 		setIdeas(ideasData.records);
 
-		// B) Fetch Tasks => filter by userId
+		// 2) Fetch Tasks => filter by userId
 		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
 		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
 
@@ -78,14 +85,14 @@ function MainContent({ airtableUser }) {
 	fetchData();
   }, [userId, baseId, apiKey]);
 
-  // --------------------------------------------------------------------------
-  // Create a new Idea => just POST with your fields
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  //  Create a new Idea
+  // -----------------------------------------------------------------
   async function handleCreateIdea(e) {
 	e.preventDefault();
 	if (!newIdeaTitle.trim()) return;
 	if (!userId) {
-	  setError("No user ID. Please log in again.");
+	  setError("No user ID found. Please log in again.");
 	  return;
 	}
 	if (!baseId || !apiKey) {
@@ -94,7 +101,6 @@ function MainContent({ airtableUser }) {
 	}
 
 	try {
-	  // POST a new idea
 	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Ideas`, {
 		method: "POST",
 		headers: {
@@ -115,16 +121,16 @@ function MainContent({ airtableUser }) {
 		  typecast: true,
 		}),
 	  });
+
 	  if (!resp.ok) {
 		const errorBody = await resp.json().catch(() => ({}));
-		console.error("[MainContent] create idea error:", errorBody);
+		console.error("Create Idea error:", errorBody);
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
-	  const data = await resp.json();
-	  const createdRecord = data.records[0];
 
-	  // local
-	  setIdeas((prev) => [...prev, createdRecord]);
+	  const data = await resp.json();
+	  const newIdea = data.records[0];
+	  setIdeas((prev) => [...prev, newIdea]);
 
 	  setNewIdeaTitle("");
 	  setNewIdeaSummary("");
@@ -134,33 +140,40 @@ function MainContent({ airtableUser }) {
 	}
   }
 
-  // --------------------------------------------------------------------------
-  // Delete Idea
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  //  Delete an Idea
+  // -----------------------------------------------------------------
   async function handleDeleteIdea(idea) {
 	setIdeas((prev) => prev.filter((i) => i.id !== idea.id));
 	try {
-	  await fetch(`https://api.airtable.com/v0/${baseId}/Ideas/${idea.id}`, {
+	  const url = `https://api.airtable.com/v0/${baseId}/Ideas/${idea.id}`;
+	  const resp = await fetch(url, {
 		method: "DELETE",
 		headers: { Authorization: `Bearer ${apiKey}` },
 	  });
+	  if (!resp.ok) {
+		throw new Error(
+		  `Airtable Delete Idea error: ${resp.status} ${resp.statusText}`
+		);
+	  }
 	} catch (err) {
 	  console.error("Failed to delete idea =>", err);
-	  // optionally revert
+	  // optionally revert local state if needed
 	}
   }
 
-  // --------------------------------------------------------------------------
-  // Create a new Task => same logic as before
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  //  Create a new Task for a given Idea
+  // -----------------------------------------------------------------
   async function createTask(ideaCustomId, taskName) {
 	if (!baseId || !apiKey) {
 	  setError("Missing Airtable credentials.");
 	  return;
 	}
+
 	try {
-	  const orderValue = tasks.length + 1;
-	  const resp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+	  const orderValue = tasks.length + 1; // simplistic ordering
+	  const createResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
 		method: "POST",
 		headers: {
 		  Authorization: `Bearer ${apiKey}`,
@@ -181,47 +194,42 @@ function MainContent({ airtableUser }) {
 		  typecast: true,
 		}),
 	  });
-	  if (!resp.ok) {
-		const errorBody = await resp.json().catch(() => ({}));
-		console.error("[MainContent] create task error:", errorBody);
-		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
+
+	  if (!createResp.ok) {
+		throw new Error(
+		  `Create Task error: ${createResp.status} ${createResp.statusText}`
+		);
 	  }
-	  const data = await resp.json();
-	  setTasks((prev) => [...prev, data.records[0]]);
+
+	  const data = await createResp.json();
+	  const newTask = data.records[0];
+	  setTasks((prev) => [...prev, newTask]);
 	} catch (err) {
 	  console.error("Error creating task =>", err);
 	  setError("Failed to create task. Please try again.");
 	}
   }
 
-  // --------------------------------------------------------------------------
-  // Reorder Ideas => assign new Order field, patch to Airtable
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  //  Reorder Ideas => patch .Order in Airtable
+  // -----------------------------------------------------------------
   async function handleReorderIdea(targetIdea, newPosition) {
-	// 1) Make a copy of the ideas array, sorted by .Order ascending
 	const sorted = [...ideas].sort(
 	  (a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
 	);
-
-	// 2) Find the old index
 	const oldIndex = sorted.findIndex((i) => i.id === targetIdea.id);
 	if (oldIndex === -1) return;
 
-	// 3) Remove from array
 	const [removed] = sorted.splice(oldIndex, 1);
-
-	// 4) Insert at newPosition - 1
 	sorted.splice(newPosition - 1, 0, removed);
 
-	// 5) Reassign fields.Order = i+1
 	sorted.forEach((rec, i) => {
 	  rec.fields.Order = i + 1;
 	});
 
-	// 6) Update local state
 	setIdeas(sorted);
 
-	// 7) Patch new Orders to Airtable in chunks
+	// patch in chunks
 	try {
 	  const chunkSize = 10;
 	  for (let i = 0; i < sorted.length; i += chunkSize) {
@@ -230,7 +238,6 @@ function MainContent({ airtableUser }) {
 		  id: r.id,
 		  fields: { Order: r.fields.Order },
 		}));
-
 		const patchResp = await fetch(
 		  `https://api.airtable.com/v0/${baseId}/Ideas`,
 		  {
@@ -250,13 +257,94 @@ function MainContent({ airtableUser }) {
 	  }
 	} catch (err) {
 	  console.error("Error reordering ideas in Airtable:", err);
-	  // optionally revert local state if needed
+	  // optionally revert
 	}
   }
 
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
+  // 1) "Turn into a Task" => show modal
+  // -----------------------------------------------------------------
+  function handleRequestTurnIntoTask(idea) {
+	setIdeaToConvert(idea);
+	setShowTurnModal(true);
+  }
+
+  // -----------------------------------------------------------------
+  // 2) Cancel => close modal
+  // -----------------------------------------------------------------
+  function handleCancelTurnIntoTask() {
+	setIdeaToConvert(null);
+	setShowTurnModal(false);
+  }
+
+  // -----------------------------------------------------------------
+  // 3) Confirm => create new Task, delete old Idea
+  // -----------------------------------------------------------------
+  async function handleConfirmTurnIntoTask(destinationIdeaID) {
+	if (!ideaToConvert) return;
+
+	try {
+	  // 3A) Create the new Task
+	  const origTitle = ideaToConvert.fields.IdeaTitle || "(Untitled)";
+	  const origSummary = ideaToConvert.fields.IdeaSummary || "";
+
+	  // POST the new task to Airtable
+	  const createResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
+		method: "POST",
+		headers: {
+		  Authorization: `Bearer ${apiKey}`,
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  records: [
+			{
+			  fields: {
+				TaskName: origTitle,
+				TaskNote: origSummary,
+				IdeaID: destinationIdeaID,
+				UserID: userId,
+				Completed: false,
+			  },
+			},
+		  ],
+		}),
+	  });
+	  if (!createResp.ok) {
+		throw new Error(
+		  `Airtable createTask error: ${createResp.status} ${createResp.statusText}`
+		);
+	  }
+	  const createData = await createResp.json();
+	  const newTask = createData.records[0];
+	  setTasks((prev) => [...prev, newTask]);
+
+	  // 3B) Delete the old Idea
+	  const deleteUrl = `https://api.airtable.com/v0/${baseId}/Ideas/${ideaToConvert.id}`;
+	  const deleteResp = await fetch(deleteUrl, {
+		method: "DELETE",
+		headers: { Authorization: `Bearer ${apiKey}` },
+	  });
+	  if (!deleteResp.ok) {
+		throw new Error(
+		  `Airtable deleteIdea error: ${deleteResp.status} ${deleteResp.statusText}`
+		);
+	  }
+
+	  // remove from local state
+	  setIdeas((prev) => prev.filter((i) => i.id !== ideaToConvert.id));
+	} catch (err) {
+	  console.error("Error turning Idea into a Task =>", err);
+	  setError("Failed to create new Task or delete old Idea. Please try again.");
+	} finally {
+	  // close modal
+	  setIdeaToConvert(null);
+	  setShowTurnModal(false);
+	}
+  }
+
+  // -----------------------------------------------------------------
   // Render
-  // --------------------------------------------------------------------------
+  // -----------------------------------------------------------------
   if (loading) {
 	return <p className="m-4">Loading your ideas...</p>;
   }
@@ -264,7 +352,7 @@ function MainContent({ airtableUser }) {
 	return <p className="m-4 text-red-500">{error}</p>;
   }
 
-  // Sort ideas by .Order for display
+  // Sort ideas by .Order
   const sortedIdeas = [...ideas].sort(
 	(a, b) => (a.fields.Order || 0) - (b.fields.Order || 0)
   );
@@ -277,7 +365,7 @@ function MainContent({ airtableUser }) {
 	  <form
 		onSubmit={handleCreateIdea}
 		className="mb-6 p-4 border rounded bg-gray-100"
-		autoComplete="off"  // <-- Disable autofill at the form level
+		autoComplete="off"
 	  >
 		<div className="mb-4">
 		  <label
@@ -294,7 +382,7 @@ function MainContent({ airtableUser }) {
 			value={newIdeaTitle}
 			onChange={(e) => setNewIdeaTitle(e.target.value)}
 			required
-			autoComplete="off"  // <-- Also disable autofill on this input
+			autoComplete="off"
 		  />
 		</div>
 
@@ -323,14 +411,26 @@ function MainContent({ airtableUser }) {
 		</button>
 	  </form>
 
-	  {/* Idea List => passing onReorderIdea */}
+	  {/* Idea List => pass the "Turn into Task" callback */}
 	  <IdeaList
 		ideas={sortedIdeas}
 		tasks={tasks}
 		onDeleteIdea={handleDeleteIdea}
 		onCreateTask={createTask}
 		onReorderIdea={handleReorderIdea}
+		onRequestTurnIntoTask={handleRequestTurnIntoTask}
 	  />
+
+	  {/* Turn Into Task Modal */}
+	  {showTurnModal && (
+		<TurnIntoTaskModal
+		  allIdeas={ideas}         // so user can pick which idea is the destination
+		  activeIdea={ideaToConvert}
+		  onClose={handleCancelTurnIntoTask}
+		  onCancel={handleCancelTurnIntoTask}
+		  onConfirm={handleConfirmTurnIntoTask}
+		/>
+	  )}
 	</div>
   );
 }

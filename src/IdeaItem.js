@@ -1,4 +1,4 @@
-// File: /src/IdeaItem.js
+// File: /Users/chrismeisner/Projects/big-idea/src/IdeaItem.js
 
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -13,6 +13,8 @@ function IdeaItem({
   position,
   totalIdeas,
   onReorder,
+  // NEW prop => to open "turn into task" modal
+  onRequestTurnIntoTask
 }) {
   const navigate = useNavigate();
   const { IdeaID, IdeaTitle, IdeaSummary } = idea.fields;
@@ -34,7 +36,7 @@ function IdeaItem({
   // Creating new tasks with Enter
   const [newTaskName, setNewTaskName] = useState("");
 
-  // Refs for top-level tasks
+  // Refs for top-level tasks (for Sortable)
   const topLevelRef = useRef(null);
   const sortableRef = useRef(null);
 
@@ -47,16 +49,20 @@ function IdeaItem({
 	setIsEditingTitle(true);
 	setEditingTitle(IdeaTitle || "");
   }
+
   function cancelEditingTitle() {
 	setIsEditingTitle(false);
 	setEditingTitle(IdeaTitle || "");
   }
+
   function handleTitleKeyDown(e) {
 	if (e.key === "Enter") commitIdeaTitleChange();
 	else if (e.key === "Escape") cancelEditingTitle();
   }
+
   function commitIdeaTitleChange() {
 	const trimmed = editingTitle.trim();
+	// If user typed "xxx" => treat it as a trigger for deleting this Idea
 	if (trimmed.toLowerCase() === "xxx") {
 	  if (onDeleteIdea) onDeleteIdea(idea);
 	  return;
@@ -65,8 +71,7 @@ function IdeaItem({
 	  cancelEditingTitle();
 	  return;
 	}
-	// local update
-	idea.fields.IdeaTitle = trimmed;
+	idea.fields.IdeaTitle = trimmed; // local update
 	setIsEditingTitle(false);
 	// optionally PATCH to Airtable...
   }
@@ -76,15 +81,17 @@ function IdeaItem({
 	setIsEditingSummary(true);
 	setEditingSummary(IdeaSummary || "");
   }
+
   function cancelEditingSummary() {
 	setIsEditingSummary(false);
 	setEditingSummary(IdeaSummary || "");
   }
+
   function commitIdeaSummaryChange() {
 	const trimmed = editingSummary.trim();
-	idea.fields.IdeaSummary = trimmed;
+	idea.fields.IdeaSummary = trimmed; // local update
 	setIsEditingSummary(false);
-	// optionally PATCH...
+	// optionally PATCH to Airtable...
   }
 
   // ---------- Clicking the Idea Title => go to detail ----------
@@ -92,7 +99,7 @@ function IdeaItem({
 	navigate(`/ideas/${IdeaID}`);
   }
 
-  // ---------- Tasks: filter incomplete, keep drag-and-drop ----------
+  // ---------- Filter tasks: incomplete top-level + subtasks ----------
   const incomplete = localTasks.filter((t) => !t.fields.Completed);
   const topLevel = incomplete.filter((t) => !t.fields.ParentTask);
   const subs = incomplete.filter((t) => t.fields.ParentTask);
@@ -100,7 +107,7 @@ function IdeaItem({
   topLevel.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
   subs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 
-  // Enable drag-and-drop for top-level tasks
+  // Enable DnD for top-level tasks
   useEffect(() => {
 	if (topLevel.length > 0 && topLevelRef.current && !sortableRef.current) {
 	  sortableRef.current = new Sortable(topLevelRef.current, {
@@ -133,7 +140,7 @@ function IdeaItem({
 	const updated = [...reordered, ...subs, ...completed];
 	setLocalTasks(updated);
 
-	// Optionally PATCH the new .Order for tasks to Airtable...
+	// optionally PATCH the new .Order to Airtable
   }
 
   // ---------- Inline editing tasks ----------
@@ -145,20 +152,22 @@ function IdeaItem({
 	}
 	setEditingTaskName(name);
   }
+
   function cancelEditingTask() {
 	setEditingTaskId(null);
 	setEditingTaskName("");
   }
+
   function commitTaskEdit(task) {
 	const trimmed = editingTaskName.trim();
-	if (trimmed.toLowerCase() === "xxx") {
-	  deleteTask(task);
-	  return;
-	}
 	if (!trimmed) {
 	  cancelEditingTask();
 	  return;
 	}
+
+	// (Removed the "xxx => delete task" logic here)
+
+	// Otherwise just rename
 	const updated = localTasks.map((t) => {
 	  if (t.id === task.id) {
 		return { ...t, fields: { ...t.fields, TaskName: trimmed } };
@@ -166,7 +175,7 @@ function IdeaItem({
 	  return t;
 	});
 	setLocalTasks(updated);
-	// optionally PATCH to Airtable...
+	// optionally PATCH to Airtable
 	cancelEditingTask();
   }
 
@@ -189,16 +198,19 @@ function IdeaItem({
   // ---------- REORDER DROPDOWN FOR IDEAS ----------
   const handleReorderChange = (e) => {
 	const newPos = parseInt(e.target.value, 10);
-	if (newPos === position) return; // no change
+	if (newPos === position) return;
 	onReorder(idea, newPos);
   };
 
+  // We only show “Turn into a Task” if there are **no tasks** for this idea
+  const showTurnIntoTask = ideaTasks.length === 0;
+
   return (
 	<li className="p-4 hover:bg-gray-50 transition">
-	  {/* ROW => Top bar with (Title & Summary) + Reorder dropdown */}
+	  {/* ROW => top bar with (Title & Summary) + reorder dropdown */}
 	  <div className="flex items-start justify-between">
 		<div className="mr-2 flex-1">
-		  {/* IDEA TITLE + "Edit" link */}
+		  {/* IDEA TITLE */}
 		  <div className="inline-flex items-center group">
 			{isEditingTitle ? (
 			  <input
@@ -220,8 +232,10 @@ function IdeaItem({
 			)}
 			{!isEditingTitle && (
 			  <span
-				className="ml-2 text-xs text-blue-600 underline cursor-pointer
-				  invisible group-hover:visible hover:no-underline"
+				className="
+				  ml-2 text-xs text-blue-600 underline cursor-pointer
+				  invisible group-hover:visible hover:no-underline
+				"
 				onClick={startEditingTitle}
 			  >
 				Edit
@@ -298,7 +312,7 @@ function IdeaItem({
 
 			  return (
 				<li key={parent.id} className="bg-white rounded p-1 mb-1">
-				  {/* Row => drag handle (for tasks) + inline edit */}
+				  {/* Row => drag handle + inline edit */}
 				  <div className="flex items-center">
 					<div
 					  className="drag-parent-handle mr-2 cursor-grab active:cursor-grabbing text-gray-400"
@@ -330,7 +344,7 @@ function IdeaItem({
 					)}
 				  </div>
 
-				  {/* Subtasks => now with bullets */}
+				  {/* Subtasks */}
 				  {childSubs.length > 0 && (
 					<ul className="ml-6 mt-1 list-disc list-inside">
 					  {childSubs.map((sub) => {
@@ -358,8 +372,7 @@ function IdeaItem({
 								className="cursor-pointer mr-2"
 								onClick={() => startEditingTask(sub)}
 							  >
-								{sub.fields.TaskName ||
-								  "(Untitled Subtask)"}
+								{sub.fields.TaskName || "(Untitled Subtask)"}
 							  </span>
 							)}
 						  </li>
@@ -385,6 +398,16 @@ function IdeaItem({
 		  className="border rounded px-2 py-1 text-sm mt-2 w-full"
 		/>
 	  </div>
+
+	  {/* If no tasks => show "Turn this Idea into a Task" link */}
+	  {showTurnIntoTask && (
+		<p
+		  className="text-sm text-blue-600 underline cursor-pointer mt-2"
+		  onClick={() => onRequestTurnIntoTask(idea)}
+		>
+		  Turn this Idea into a Task
+		</p>
+	  )}
 	</li>
   );
 }

@@ -1,3 +1,5 @@
+// File: /Users/chrismeisner/Projects/big-idea/src/IdeaDetail.jsx
+
 import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import Sortable from "sortablejs";
@@ -154,7 +156,7 @@ function IdeaDetail({ airtableUser }) {
   }
 
   async function deleteTask(task) {
-	// 1) Remove from local state
+	// 1) Remove from local state right away (optimistic removal)
 	setTasks((prev) => prev.filter((t) => t.id !== task.id));
 
 	// 2) Delete from Airtable
@@ -168,10 +170,13 @@ function IdeaDetail({ airtableUser }) {
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
+	  // If you'd like, re-fetch tasks here. Typically not needed because local state is updated.
 	} catch (err) {
 	  console.error("Error deleting task =>", err);
 	  setError("Failed to delete task. Please refresh.");
+
 	  // Optionally revert local state if needed
+	  // setTasks((prev) => [...prev, task]);
 	}
   }
 
@@ -481,7 +486,9 @@ function IdeaDetail({ airtableUser }) {
 			  fields: {
 				...t.fields,
 				Completed: wasCompleted,
-				CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
+				CompletedTime: wasCompleted
+				  ? t.fields.CompletedTime
+				  : null,
 			  },
 			};
 		  }
@@ -739,6 +746,7 @@ function IdeaDetail({ airtableUser }) {
 
 	// If user typed "xxx" => delete
 	if (newName.toLowerCase() === "xxx") {
+	  // Delete immediately
 	  await deleteTask(task);
 	  cancelEditingTask();
 	  return;
@@ -923,7 +931,10 @@ function IdeaDetail({ airtableUser }) {
 	  />
 
 	  {/* New top-level Task form */}
-	  <form onSubmit={handleCreateTopLevelTask} className="mt-4 flex flex-col gap-2 max-w-md">
+	  <form
+		onSubmit={handleCreateTopLevelTask}
+		className="mt-4 flex flex-col gap-2 max-w-md"
+	  >
 		<div className="flex gap-2">
 		  <input
 			type="text"
@@ -1191,8 +1202,7 @@ function IdeaDetail({ airtableUser }) {
 						  subCompletedLabel = "Invalid date";
 						}
 					  }
-					  const subFocusEmoji =
-						subFocus === "today" ? "☀️" : "💤";
+					  const subFocusEmoji = subFocus === "today" ? "☀️" : "💤";
 
 					  return (
 						<li
@@ -1227,9 +1237,7 @@ function IdeaDetail({ airtableUser }) {
 							  <input
 								type="text"
 								value={editingTaskName}
-								onChange={(e) =>
-								  setEditingTaskName(e.target.value)
-								}
+								onChange={(e) => setEditingTaskName(e.target.value)}
 								onBlur={() => commitTaskNameEdit(sub)}
 								onKeyDown={(e) => {
 								  if (e.key === "Enter") {

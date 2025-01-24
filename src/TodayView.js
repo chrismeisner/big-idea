@@ -1,3 +1,5 @@
+// File: /Users/chrismeisner/Projects/big-idea/src/TodayView.js
+
 import React, {
   useEffect,
   useState,
@@ -33,7 +35,7 @@ function TodayView({ airtableUser }) {
   }, [airtableUser]);
 
   // ------------------------------------------------------------------
-  // 2) Countdown logic, using `todayTime` instead of hardcoded 4:20
+  // 2) Countdown logic, using `todayTime`
   // ------------------------------------------------------------------
   useEffect(() => {
 	function getTargetTime() {
@@ -127,7 +129,7 @@ function TodayView({ airtableUser }) {
   };
 
   // ------------------------------------------------------------------
-  // 4) Remaining state/logic for tasks, ideas, etc.
+  // 4) State for tasks, ideas, etc.
   // ------------------------------------------------------------------
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
@@ -436,6 +438,7 @@ function TodayView({ airtableUser }) {
 	setEditingTaskId(null);
 	setEditingTaskName("");
   }
+
   async function commitTaskEdit(task) {
 	const trimmed = editingTaskName.trim();
 	if (!trimmed) {
@@ -500,11 +503,9 @@ function TodayView({ airtableUser }) {
 	setEditingNotesTaskId(null);
 	setEditingNotesText("");
   }
+
   async function commitNotesEdit(task) {
 	const trimmed = editingNotesText.trim();
-	// If user clears it out, that’s OK—just store empty string
-	// If user typed "xxx" => not necessarily a delete, but we can allow it
-	// (No special rule here unless you want to interpret "xxx" in some way.)
 
 	// local
 	setTasks((prev) =>
@@ -549,6 +550,7 @@ function TodayView({ airtableUser }) {
   // 10) Deleting a task
   // ------------------------------------------------------------------
   async function deleteTask(task) {
+	// Remove from local state right away
 	setTasks((prev) => prev.filter((t) => t.id !== task.id));
 
 	try {
@@ -561,9 +563,11 @@ function TodayView({ airtableUser }) {
 	  if (!resp.ok) {
 		throw new Error(`Airtable error: ${resp.status} ${resp.statusText}`);
 	  }
+	  // Optionally re-fetch or do nothing since local state is updated
 	} catch (err) {
 	  console.error("Failed to delete task =>", err);
 	  // optionally revert
+	  // setTasks((prev) => [...prev, task]);
 	}
   }
 
@@ -678,7 +682,9 @@ function TodayView({ airtableUser }) {
   const completedTasks = tasks.filter((t) => t.fields.Completed);
 
   // Sort them
-  incompleteTasks.sort((a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0));
+  incompleteTasks.sort(
+	(a, b) => (a.fields.OrderToday || 0) - (b.fields.OrderToday || 0)
+  );
   completedTasks.sort((a, b) => {
 	const aTime = a.fields.CompletedTime || "";
 	const bTime = b.fields.CompletedTime || "";
@@ -810,7 +816,10 @@ function TodayView({ airtableUser }) {
 
 	  {/* INCOMPLETE TASKS (sortable) */}
 	  <ul className="mb-6 border rounded divide-y" ref={incompleteListRef}>
-		{incompleteTasks.map((task) => {
+		{incompleteTasks.map((task, index) => {
+		  // highlight first incomplete
+		  const isFirstIncomplete = index === 0;
+
 		  const isEditingName = editingTaskId === task.id;
 		  const isEditingNotes = editingNotesTaskId === task.id;
 
@@ -835,7 +844,12 @@ function TodayView({ airtableUser }) {
 		  const focusEmoji = isFocus ? "☀️" : "💤";
 
 		  return (
-			<li key={task.id} className="p-3 hover:bg-gray-50 flex flex-col group">
+			<li
+			  key={task.id}
+			  className={`p-3 flex flex-col group ${
+				isFirstIncomplete ? "bg-yellow-100" : "hover:bg-gray-50"
+			  }`}
+			>
 			  {/* FIRST LINE => TaskName, Idea link, Focus toggle */}
 			  <div className="flex items-center">
 				{/* Draggable handle */}
@@ -880,7 +894,7 @@ function TodayView({ airtableUser }) {
 					  {task.fields.TaskName || "(Untitled Task)"}
 					</span>
 
-					{/* Idea Title Link in parentheses (if any) */}
+					{/* Idea Title Link */}
 					{ideaTitle && (
 					  <Link
 						to={`/ideas/${ideaCID}`}
@@ -913,7 +927,7 @@ function TodayView({ airtableUser }) {
 				</p>
 			  )}
 
-			  {/* TaskNote (inline) => if we have notes or we’re editing */}
+			  {/* TaskNote */}
 			  <div className="ml-6 mt-2">
 				{isEditingNotes ? (
 				  <div>

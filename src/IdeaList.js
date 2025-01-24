@@ -1,5 +1,3 @@
-// File: /src/IdeaList.js
-
 import React from "react";
 import IdeaItem from "./IdeaItem";
 
@@ -8,13 +6,14 @@ function IdeaList({
   tasks,
   onDeleteIdea,
   onCreateTask,
-  onReorderIdea, // <- new prop to handle reorder
+  onReorderIdea,
+  // NEW prop
+  onRequestTurnIntoTask
 }) {
   if (!ideas || ideas.length === 0) {
 	return <p>No ideas found.</p>;
   }
 
-  // We'll pass the relevant tasks for each idea, plus its “position” (index+1).
   return (
 	<ul className="divide-y divide-gray-200 border rounded">
 	  {ideas.map((idea, index) => {
@@ -29,9 +28,11 @@ function IdeaList({
 			ideaTasks={ideaTasks}
 			onDeleteIdea={onDeleteIdea}
 			onTaskCreate={(taskName) => onCreateTask(ideaCustomId, taskName)}
-			position={index + 1}       // 1-based position
-			totalIdeas={ideas.length}  // total count
-			onReorder={onReorderIdea}  // pass reorder handler
+			position={index + 1}
+			totalIdeas={ideas.length}
+			onReorder={onReorderIdea}
+			// pass it down so IdeaItem can show the link
+			onRequestTurnIntoTask={onRequestTurnIntoTask}
 		  />
 		);
 	  })}
