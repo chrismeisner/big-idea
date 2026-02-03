@@ -95,21 +95,20 @@ function Profile({ airtableUser, onUserUpdate }) {
 
     try {
       const result = await switchDataSource(airtableUser.fields.UserID, newSource);
-      setAdminStatus(prev => ({
-        ...prev,
-        currentDataSource: result.currentDataSource,
-      }));
       setMessage({ 
         type: "success", 
-        text: `Switched to ${result.currentDataSource}. Note: Data is separate between sources.` 
+        text: `Switched to ${result.currentDataSource}. Reloading...` 
       });
+      // Reload the page after a short delay to re-authenticate with the new data source
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     } catch (err) {
       console.error("Error switching data source:", err);
       setMessage({ 
         type: "error", 
         text: err.message || "Failed to switch data source." 
       });
-    } finally {
       setSwitchingSource(false);
     }
   };

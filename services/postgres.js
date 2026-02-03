@@ -54,12 +54,33 @@ async function updateUser(id, data) {
 
   if (sets.length === 0) return null;
 
-  values.push(id);
-  const result = await pool.query(
-    `UPDATE users SET ${sets.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-    values
-  );
-  return formatUser(result.rows[0]);
+  // Handle both numeric IDs and Airtable-style IDs (e.g., "rechJ0hdf3v9TwaXJ")
+  // If the ID starts with "rec", it's an Airtable ID - extract the user_id part
+  const isAirtableId = typeof id === 'string' && id.startsWith('rec');
+  
+  if (isAirtableId) {
+    // Look up by user_id field instead (strip "rec" prefix to get actual user_id)
+    const userId = id.replace(/^rec/, '');
+    values.push(userId);
+    const result = await pool.query(
+      `UPDATE users SET ${sets.join(', ')} WHERE user_id = $${paramIndex} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) {
+      throw new Error(`User not found with user_id: ${userId}`);
+    }
+    return formatUser(result.rows[0]);
+  } else {
+    values.push(id);
+    const result = await pool.query(
+      `UPDATE users SET ${sets.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) {
+      throw new Error(`User not found with id: ${id}`);
+    }
+    return formatUser(result.rows[0]);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
