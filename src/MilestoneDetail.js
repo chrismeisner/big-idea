@@ -1,24 +1,27 @@
+// File: /src/MilestoneDetail.js
+
 import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import * as api from "./api";
 
 function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
   if (totalTasks === 0) {
-	return <p className="text-sm text-gray-500">No tasks yet.</p>;
+    return <p className="text-sm text-gray-500">No tasks yet.</p>;
   }
 
   return (
-	<div className="mt-2">
-	  <p className="text-sm text-gray-600">
-		{completedTasks} of {totalTasks} tasks completed
-		<span className="ml-2">({percentage}%)</span>
-	  </p>
-	  <div className="bg-gray-200 h-3 rounded mt-1 w-full">
-		<div
-		  className="bg-green-500 h-3 rounded"
-		  style={{ width: `${percentage}%` }}
-		/>
-	  </div>
-	</div>
+    <div className="mt-2">
+      <p className="text-sm text-gray-600">
+        {completedTasks} of {totalTasks} tasks completed
+        <span className="ml-2">({percentage}%)</span>
+      </p>
+      <div className="bg-gray-200 h-3 rounded mt-1 w-full">
+        <div
+          className="bg-green-500 h-3 rounded"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -37,724 +40,525 @@ function MilestoneDetail({ airtableUser }) {
   // Countdown
   const [countdown, setCountdown] = useState("");
 
-  // Airtable env
-  const baseId = process.env.REACT_APP_AIRTABLE_BASE_ID;
-  const apiKey = process.env.REACT_APP_AIRTABLE_API_KEY;
   const userId = airtableUser?.fields?.UserID || null;
 
-  // --------------------------------------------------------------------------
-  // 1) Fetch milestone + tasks + ideas
-  // --------------------------------------------------------------------------
+  // Fetch milestone + tasks + ideas
   useEffect(() => {
-	async function fetchData() {
-	  if (!baseId || !apiKey) {
-		setError("Missing Airtable credentials.");
-		setLoading(false);
-		return;
-	  }
-	  if (!userId) {
-		setError("No logged-in user ID found. Please log in again.");
-		setLoading(false);
-		return;
-	  }
+    async function fetchData() {
+      if (!userId) {
+        setError("No logged-in user ID found. Please log in again.");
+        setLoading(false);
+        return;
+      }
 
-	  try {
-		setLoading(true);
-		setError(null);
+      try {
+        setLoading(true);
+        setError(null);
 
-		// A) Milestone => AND(MilestoneID=..., {UserID}=...)
-		const milestoneUrl = new URL(
-		  `https://api.airtable.com/v0/${baseId}/Milestones`
-		);
-		milestoneUrl.searchParams.set(
-		  "filterByFormula",
-		  `AND({MilestoneID}="${milestoneCustomId}", {UserID}="${userId}")`
-		);
-		const milestoneResp = await fetch(milestoneUrl.toString(), {
-		  headers: { Authorization: `Bearer ${apiKey}` },
-		});
-		if (!milestoneResp.ok) {
-		  throw new Error(
-			`Airtable error (Milestone): ${milestoneResp.status} ${milestoneResp.statusText}`
-		  );
-		}
-		const milestoneData = await milestoneResp.json();
-		if (milestoneData.records.length === 0) {
-		  setError(`No Milestone found for ID: ${milestoneCustomId}`);
-		  setLoading(false);
-		  return;
-		}
-		setMilestone(milestoneData.records[0]);
+        const [milestoneData, tasksData, ideasData] = await Promise.all([
+          api.getMilestoneByCustomId(milestoneCustomId),
+          api.getTasks(userId),
+          api.getIdeas(userId),
+        ]);
 
-		// B) Tasks => all tasks for this user
-		const tasksUrl = new URL(`https://api.airtable.com/v0/${baseId}/Tasks`);
-		tasksUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
-		const tasksResp = await fetch(tasksUrl.toString(), {
-		  headers: { Authorization: `Bearer ${apiKey}` },
-		});
-		if (!tasksResp.ok) {
-		  throw new Error(
-			`Airtable error (Tasks): ${tasksResp.status} ${tasksResp.statusText}`
-		  );
-		}
-		const tasksData = await tasksResp.json();
-		setTasks(tasksData.records);
+        if (!milestoneData) {
+          setError(`No Milestone found for ID: ${milestoneCustomId}`);
+          setLoading(false);
+          return;
+        }
 
-		// C) Ideas => for this user
-		const ideasUrl = new URL(`https://api.airtable.com/v0/${baseId}/Ideas`);
-		ideasUrl.searchParams.set("filterByFormula", `{UserID}="${userId}"`);
-		const ideasResp = await fetch(ideasUrl.toString(), {
-		  headers: { Authorization: `Bearer ${apiKey}` },
-		});
-		if (!ideasResp.ok) {
-		  throw new Error(
-			`Airtable error (Ideas): ${ideasResp.status} ${ideasResp.statusText}`
-		  );
-		}
-		const ideasData = await ideasResp.json();
-		setIdeas(ideasData.records);
-	  } catch (err) {
-		console.error("Error fetching milestone detail:", err);
-		setError("Failed to load milestone data. Please try again.");
-	  } finally {
-		setLoading(false);
-	  }
-	}
-	fetchData();
-  }, [baseId, apiKey, milestoneCustomId, userId]);
+        setMilestone(milestoneData);
+        setTasks(tasksData.records);
+        setIdeas(ideasData.records);
+      } catch (err) {
+        console.error("Error fetching milestone detail:", err);
+        setError("Failed to load milestone data. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchData();
+  }, [milestoneCustomId, userId]);
 
-  // --------------------------------------------------------------------------
-  // 2) Countdown logic
-  // --------------------------------------------------------------------------
+  // Countdown logic
   useEffect(() => {
-	if (!milestone?.fields?.MilestoneTime) return;
+    if (!milestone?.fields?.MilestoneTime) return;
 
-	function computeCountdown() {
-	  const target = new Date(milestone.fields.MilestoneTime).getTime();
-	  const now = Date.now();
-	  const diff = target - now;
-	  if (diff <= 0) {
-		return "Time’s up!";
-	  }
+    function computeCountdown() {
+      const target = new Date(milestone.fields.MilestoneTime).getTime();
+      const now = Date.now();
+      const diff = target - now;
+      if (diff <= 0) {
+        return "Time's up!";
+      }
 
-	  const totalSec = Math.floor(diff / 1000);
-	  const days = Math.floor(totalSec / 86400);
-	  const hours = Math.floor((totalSec % 86400) / 3600);
-	  const minutes = Math.floor((totalSec % 3600) / 60);
-	  const seconds = totalSec % 60;
-	  return `${days}d ${hours}h ${minutes}m ${seconds}s remaining`;
-	}
+      const totalSec = Math.floor(diff / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+      return `${days}d ${hours}h ${minutes}m ${seconds}s remaining`;
+    }
 
-	setCountdown(computeCountdown());
-	const intervalId = setInterval(() => {
-	  setCountdown(computeCountdown());
-	}, 1000);
+    setCountdown(computeCountdown());
+    const intervalId = setInterval(() => {
+      setCountdown(computeCountdown());
+    }, 1000);
 
-	return () => clearInterval(intervalId);
+    return () => clearInterval(intervalId);
   }, [milestone?.fields?.MilestoneTime]);
 
-  // --------------------------------------------------------------------------
-  // 3) Inline editing of milestone title => click the title itself
-  // --------------------------------------------------------------------------
+  // Inline editing of milestone title
   const startEditingTitle = () => {
-	setIsEditingTitle(true);
-	setEditingName(milestone?.fields?.MilestoneName || "");
+    setIsEditingTitle(true);
+    setEditingName(milestone?.fields?.MilestoneName || "");
   };
 
   const cancelEditingTitle = () => {
-	setIsEditingTitle(false);
-	setEditingName(milestone?.fields?.MilestoneName || "");
+    setIsEditingTitle(false);
+    setEditingName(milestone?.fields?.MilestoneName || "");
   };
 
   const handleTitleSave = async () => {
-	const trimmed = editingName.trim();
-	if (!trimmed) {
-	  // revert if empty
-	  cancelEditingTitle();
-	  return;
-	}
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      cancelEditingTitle();
+      return;
+    }
 
-	try {
-	  // local update
-	  setMilestone((prev) => {
-		if (!prev) return null;
-		return {
-		  ...prev,
-		  fields: {
-			...prev.fields,
-			MilestoneName: trimmed,
-		  },
-		};
-	  });
+    try {
+      setMilestone((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          fields: {
+            ...prev.fields,
+            MilestoneName: trimmed,
+          },
+        };
+      });
 
-	  // patch to Airtable
-	  const patchResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Milestones`,
-		{
-		  method: "PATCH",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				id: milestone.id,
-				fields: {
-				  MilestoneName: trimmed,
-				},
-			  },
-			],
-		  }),
-		}
-	  );
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error updating milestone title:", err);
-	  setError("Failed to update milestone title. Please try again.");
-	} finally {
-	  setIsEditingTitle(false);
-	}
+      await api.updateMilestone(milestone.id, { milestoneName: trimmed });
+    } catch (err) {
+      console.error("Error updating milestone title:", err);
+      setError("Failed to update milestone title. Please try again.");
+    } finally {
+      setIsEditingTitle(false);
+    }
   };
 
-  // --------------------------------------------------------------------------
-  // 4) Date/time editing modal
-  // --------------------------------------------------------------------------
+  // Date/time editing modal
   const [showDateModal, setShowDateModal] = useState(false);
   const [tempDateValue, setTempDateValue] = useState("");
 
   function formatForDateTimeLocal(dateString) {
-	// e.g. "2025-01-17T17:00"
-	if (!dateString) return "";
-	const date = new Date(dateString);
-
-	// Convert to YYYY-MM-DDTHH:mm (local time)
-	const year = date.getFullYear();
-	const month = String(date.getMonth() + 1).padStart(2, "0");
-	const day = String(date.getDate()).padStart(2, "0");
-	const hours = String(date.getHours()).padStart(2, "0");
-	const minutes = String(date.getMinutes()).padStart(2, "0");
-
-	return `${year}-${month}-${day}T${hours}:${minutes}`;
+    if (!dateString) return "";
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
   }
 
   const handleDueDateClick = () => {
-	// Prepare the current date/time in a suitable format
-	if (milestone?.fields?.MilestoneTime) {
-	  setTempDateValue(formatForDateTimeLocal(milestone.fields.MilestoneTime));
-	} else {
-	  setTempDateValue("");
-	}
-	setShowDateModal(true);
+    if (milestone?.fields?.MilestoneTime) {
+      setTempDateValue(formatForDateTimeLocal(milestone.fields.MilestoneTime));
+    } else {
+      setTempDateValue("");
+    }
+    setShowDateModal(true);
   };
 
   const handleCancelDateChange = () => {
-	setShowDateModal(false);
-	setTempDateValue("");
+    setShowDateModal(false);
+    setTempDateValue("");
   };
 
   const handleSaveDateChange = async () => {
-	try {
-	  // Convert the local datetime value into an ISO string
-	  const newDateISO = tempDateValue ? new Date(tempDateValue).toISOString() : null;
+    try {
+      const newDateISO = tempDateValue ? new Date(tempDateValue).toISOString() : null;
 
-	  // local update
-	  setMilestone((prev) => {
-		if (!prev) return null;
-		return {
-		  ...prev,
-		  fields: {
-			...prev.fields,
-			MilestoneTime: newDateISO || "",
-		  },
-		};
-	  });
+      setMilestone((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          fields: {
+            ...prev.fields,
+            MilestoneTime: newDateISO || "",
+          },
+        };
+      });
 
-	  // Patch to Airtable
-	  const patchResp = await fetch(
-		`https://api.airtable.com/v0/${baseId}/Milestones`,
-		{
-		  method: "PATCH",
-		  headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		  },
-		  body: JSON.stringify({
-			records: [
-			  {
-				id: milestone.id,
-				fields: {
-				  MilestoneTime: newDateISO || "",
-				},
-			  },
-			],
-		  }),
-		}
-	  );
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error (MilestoneTime): ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error updating milestone due date:", err);
-	  setError("Failed to update milestone due date. Please try again.");
-	} finally {
-	  setShowDateModal(false);
-	}
+      await api.updateMilestone(milestone.id, { milestoneTime: newDateISO || "" });
+    } catch (err) {
+      console.error("Error updating milestone due date:", err);
+      setError("Failed to update milestone due date. Please try again.");
+    } finally {
+      setShowDateModal(false);
+    }
   };
 
-  // --------------------------------------------------------------------------
-  // 5) Toggling "Focus" or "Completed" for tasks
-  // --------------------------------------------------------------------------
+  // Toggling Focus or Completed for tasks
   const handleToggleFocus = async (task) => {
-	const wasFocusToday = task.fields.Focus === "today";
-	const newValue = wasFocusToday ? "" : "today";
+    const wasFocusToday = task.fields.Focus === "today";
+    const newValue = wasFocusToday ? "" : "today";
 
-	// local update
-	setTasks((prev) =>
-	  prev.map((t) =>
-		t.id === task.id ? { ...t, fields: { ...t.fields, Focus: newValue } } : t
-	  )
-	);
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, fields: { ...t.fields, Focus: newValue } } : t
+      )
+    );
 
-	// patch
-	try {
-	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Focus: newValue,
-			  },
-			},
-		  ],
-		}),
-	  });
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error toggling Focus:", err);
-	  setError("Failed to toggle Focus. Please try again.");
-
-	  // revert local
-	  setTasks((prev) =>
-		prev.map((t) =>
-		  t.id === task.id
-			? { ...t, fields: { ...t.fields, Focus: task.fields.Focus } }
-			: t
-		)
-	  );
-	}
+    try {
+      await api.updateTask(task.id, { focus: newValue });
+    } catch (err) {
+      console.error("Error toggling Focus:", err);
+      setError("Failed to toggle Focus. Please try again.");
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id
+            ? { ...t, fields: { ...t.fields, Focus: task.fields.Focus } }
+            : t
+        )
+      );
+    }
   };
 
   const handleToggleCompleted = async (task) => {
-	const wasCompleted = task.fields.Completed || false;
-	const newValue = !wasCompleted;
-	const newTime = newValue ? new Date().toISOString() : null;
+    const wasCompleted = task.fields.Completed || false;
+    const newValue = !wasCompleted;
+    const newTime = newValue ? new Date().toISOString() : null;
 
-	// local update
-	setTasks((prev) =>
-	  prev.map((t) =>
-		t.id === task.id
-		  ? {
-			  ...t,
-			  fields: {
-				...t.fields,
-				Completed: newValue,
-				CompletedTime: newTime,
-			  },
-			}
-		  : t
-	  )
-	);
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id
+          ? {
+              ...t,
+              fields: {
+                ...t.fields,
+                Completed: newValue,
+                CompletedTime: newTime,
+              },
+            }
+          : t
+      )
+    );
 
-	// patch
-	try {
-	  if (!baseId || !apiKey) throw new Error("Missing Airtable credentials.");
-
-	  const patchResp = await fetch(`https://api.airtable.com/v0/${baseId}/Tasks`, {
-		method: "PATCH",
-		headers: {
-		  Authorization: `Bearer ${apiKey}`,
-		  "Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-		  records: [
-			{
-			  id: task.id,
-			  fields: {
-				Completed: newValue,
-				CompletedTime: newTime,
-			  },
-			},
-		  ],
-		}),
-	  });
-	  if (!patchResp.ok) {
-		throw new Error(
-		  `Airtable error: ${patchResp.status} ${patchResp.statusText}`
-		);
-	  }
-	} catch (err) {
-	  console.error("Error toggling Completed:", err);
-	  setError("Failed to toggle Completed. Please try again.");
-
-	  // revert local
-	  setTasks((prev) =>
-		prev.map((t) =>
-		  t.id === task.id
-			? {
-				...t,
-				fields: {
-				  ...t.fields,
-				  Completed: wasCompleted,
-				  CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
-				},
-			  }
-			: t
-		)
-	  );
-	}
+    try {
+      await api.updateTask(task.id, { completed: newValue, completedTime: newTime });
+    } catch (err) {
+      console.error("Error toggling Completed:", err);
+      setError("Failed to toggle Completed. Please try again.");
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id
+            ? {
+                ...t,
+                fields: {
+                  ...t.fields,
+                  Completed: wasCompleted,
+                  CompletedTime: wasCompleted ? t.fields.CompletedTime : null,
+                },
+              }
+            : t
+        )
+      );
+    }
   };
 
-  // --------------------------------------------------------------------------
-  // 6) Subtasks => incomplete first by SubOrder, completed last by CompletedTime desc
-  // --------------------------------------------------------------------------
+  // Subtasks
   function getSubtasksFor(parentTask) {
-	const parentID = parentTask.fields.TaskID || null;
-	if (!parentID) return [];
-	const allSubs = tasks.filter((x) => x.fields.ParentTask === parentID);
+    const parentID = parentTask.fields.TaskID || null;
+    if (!parentID) return [];
+    const allSubs = tasks.filter((x) => x.fields.ParentTask === parentID);
 
-	const incSubs = allSubs.filter((s) => !s.fields.Completed);
-	incSubs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
+    const incSubs = allSubs.filter((s) => !s.fields.Completed);
+    incSubs.sort((a, b) => (a.fields.SubOrder || 0) - (b.fields.SubOrder || 0));
 
-	const compSubs = allSubs.filter((s) => s.fields.Completed);
-	compSubs.sort((a, b) => {
-	  const tA = a.fields.CompletedTime || "";
-	  const tB = b.fields.CompletedTime || "";
-	  return tB.localeCompare(tA);
-	});
+    const compSubs = allSubs.filter((s) => s.fields.Completed);
+    compSubs.sort((a, b) => {
+      const tA = a.fields.CompletedTime || "";
+      const tB = b.fields.CompletedTime || "";
+      return tB.localeCompare(tA);
+    });
 
-	return [...incSubs, ...compSubs];
+    return [...incSubs, ...compSubs];
   }
 
-  // --------------------------------------------------------------------------
-  // 7) Which tasks belong to this milestone?
-  // --------------------------------------------------------------------------
+  // Which tasks belong to this milestone?
   const milestoneTasks = milestone
-	? tasks.filter((t) => t.fields.MilestoneID === milestoneCustomId)
-	: [];
+    ? tasks.filter((t) => t.fields.MilestoneID === milestoneCustomId)
+    : [];
 
-  // Overall progress calculation => tasks + subtasks
+  // Overall progress calculation
   const allMilestoneTasks = [];
   milestoneTasks.forEach((pt) => {
-	allMilestoneTasks.push(pt);
-	const subs = getSubtasksFor(pt);
-	allMilestoneTasks.push(...subs);
+    allMilestoneTasks.push(pt);
+    const subs = getSubtasksFor(pt);
+    allMilestoneTasks.push(...subs);
   });
   const totalTasks = allMilestoneTasks.length;
   const completedTasks = allMilestoneTasks.filter((t) => t.fields.Completed).length;
   const percentage =
-	totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
-  // Group tasks by Idea => used in the UI
+  // Group tasks by Idea
   const tasksByIdea = {};
   milestoneTasks.forEach((t) => {
-	const ideaKey = t.fields.IdeaID;
-	if (!tasksByIdea[ideaKey]) {
-	  tasksByIdea[ideaKey] = [];
-	}
-	tasksByIdea[ideaKey].push(t);
+    const ideaKey = t.fields.IdeaID;
+    if (!tasksByIdea[ideaKey]) {
+      tasksByIdea[ideaKey] = [];
+    }
+    tasksByIdea[ideaKey].push(t);
   });
 
-  // For each idea => separate incomplete vs completed, sort them
   const groupedData = Object.entries(tasksByIdea).map(([ideaCustomId, tasksForIdea]) => {
-	const ideaRecord = ideas.find((i) => i.fields.IdeaID === ideaCustomId);
+    const ideaRecord = ideas.find((i) => i.fields.IdeaID === ideaCustomId);
 
-	// incomplete => sort by .Order
-	const incomplete = tasksForIdea.filter((tt) => !tt.fields.Completed);
-	incomplete.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
+    const incomplete = tasksForIdea.filter((tt) => !tt.fields.Completed);
+    incomplete.sort((a, b) => (a.fields.Order || 0) - (b.fields.Order || 0));
 
-	// completed => sort by CompletedTime desc
-	const completed = tasksForIdea.filter((tt) => tt.fields.Completed);
-	completed.sort((a, b) => {
-	  const tA = a.fields.CompletedTime || "";
-	  const tB = b.fields.CompletedTime || "";
-	  return tB.localeCompare(tA);
-	});
+    const completed = tasksForIdea.filter((tt) => tt.fields.Completed);
+    completed.sort((a, b) => {
+      const tA = a.fields.CompletedTime || "";
+      const tB = b.fields.CompletedTime || "";
+      return tB.localeCompare(tA);
+    });
 
-	const sortedTasksForIdea = [...incomplete, ...completed];
-	return { ideaRecord, tasks: sortedTasksForIdea };
+    const sortedTasksForIdea = [...incomplete, ...completed];
+    return { ideaRecord, tasks: sortedTasksForIdea };
   });
 
-  // --------------------------------------------------------------------------
   // Render
-  // --------------------------------------------------------------------------
   if (loading) {
-	return <p className="m-4">Loading milestone details...</p>;
+    return <p className="m-4">Loading milestone details...</p>;
   }
   if (error) {
-	return <p className="m-4 text-red-500">{error}</p>;
+    return <p className="m-4 text-red-500">{error}</p>;
   }
   if (!milestone) {
-	return (
-	  <p className="m-4">
-		No milestone found for ID: <strong>{milestoneCustomId}</strong>
-	  </p>
-	);
+    return (
+      <p className="m-4">
+        No milestone found for ID: <strong>{milestoneCustomId}</strong>
+      </p>
+    );
   }
 
   const { MilestoneTime, MilestoneNotes, MilestoneName } = milestone.fields;
   const formattedDue = MilestoneTime ? new Date(MilestoneTime).toLocaleString() : null;
 
   return (
-	<div className="container py-6">
-	  <Link to="/milestones" className="text-blue-600 underline">
-		&larr; Back to Milestones
-	  </Link>
+    <div className="container py-6">
+      <Link to="/milestones" className="text-blue-600 underline">
+        &larr; Back to Milestones
+      </Link>
 
-	  {/* DATE MODAL OVERLAY */}
-	  {showDateModal && (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-		  <div className="bg-white p-4 rounded shadow-md w-80">
-			<h2 className="text-xl font-semibold mb-4">Edit Due Date</h2>
-			<input
-			  type="datetime-local"
-			  className="border p-2 w-full rounded"
-			  value={tempDateValue}
-			  onChange={(e) => setTempDateValue(e.target.value)}
-			/>
-			<div className="flex justify-end mt-4 space-x-2">
-			  <button
-				onClick={handleCancelDateChange}
-				className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
-			  >
-				Cancel
-			  </button>
-			  <button
-				onClick={handleSaveDateChange}
-				className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-			  >
-				Save
-			  </button>
-			</div>
-		  </div>
-		</div>
-	  )}
+      {/* DATE MODAL OVERLAY */}
+      {showDateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white p-4 rounded shadow-md w-80">
+            <h2 className="text-xl font-semibold mb-4">Edit Due Date</h2>
+            <input
+              type="datetime-local"
+              className="border p-2 w-full rounded"
+              value={tempDateValue}
+              onChange={(e) => setTempDateValue(e.target.value)}
+            />
+            <div className="flex justify-end mt-4 space-x-2">
+              <button
+                onClick={handleCancelDateChange}
+                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveDateChange}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-	  <div className="mt-4">
-		{/* If not editing => show H2 that is clickable */}
-		{!isEditingTitle ? (
-		  <h2
-			className="text-2xl font-bold cursor-pointer"
-			onClick={startEditingTitle}
-		  >
-			{MilestoneName || "(Untitled Milestone)"}
-		  </h2>
-		) : (
-		  // If editing => show input
-		  <input
-			type="text"
-			className="text-2xl font-bold border-b border-gray-300 focus:outline-none"
-			value={editingName}
-			onChange={(e) => setEditingName(e.target.value)}
-			onBlur={handleTitleSave}
-			onKeyDown={(e) => {
-			  if (e.key === "Enter") {
-				handleTitleSave();
-			  } else if (e.key === "Escape") {
-				cancelEditingTitle();
-			  }
-			}}
-			autoFocus
-		  />
-		)}
-	  </div>
+      <div className="mt-4">
+        {!isEditingTitle ? (
+          <h2
+            className="text-2xl font-bold cursor-pointer"
+            onClick={startEditingTitle}
+          >
+            {MilestoneName || "(Untitled Milestone)"}
+          </h2>
+        ) : (
+          <input
+            type="text"
+            className="text-2xl font-bold border-b border-gray-300 focus:outline-none"
+            value={editingName}
+            onChange={(e) => setEditingName(e.target.value)}
+            onBlur={handleTitleSave}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                handleTitleSave();
+              } else if (e.key === "Escape") {
+                cancelEditingTitle();
+              }
+            }}
+            autoFocus
+          />
+        )}
+      </div>
 
-	  {formattedDue && (
-		<p
-		  className="text-sm text-gray-600 mt-1 underline cursor-pointer inline-block"
-		  onClick={handleDueDateClick}
-		>
-		  Due: {formattedDue}
-		</p>
-	  )}
-	  {countdown && <p className="text-lg font-medium text-red-600 mt-2">{countdown}</p>}
+      {formattedDue && (
+        <p
+          className="text-sm text-gray-600 mt-1 underline cursor-pointer inline-block"
+          onClick={handleDueDateClick}
+        >
+          Due: {formattedDue}
+        </p>
+      )}
+      {countdown && <p className="text-lg font-medium text-red-600 mt-2">{countdown}</p>}
 
-	  {MilestoneNotes && (
-		<p className="mt-2 whitespace-pre-line">{MilestoneNotes}</p>
-	  )}
+      {MilestoneNotes && (
+        <p className="mt-2 whitespace-pre-line">{MilestoneNotes}</p>
+      )}
 
-	  <hr className="my-4" />
-	  <MilestoneProgressBar
-		completedTasks={completedTasks}
-		totalTasks={totalTasks}
-		percentage={percentage}
-	  />
-	  <hr className="my-4" />
+      <hr className="my-4" />
+      <MilestoneProgressBar
+        completedTasks={completedTasks}
+        totalTasks={totalTasks}
+        percentage={percentage}
+      />
+      <hr className="my-4" />
 
-	  <h3 className="text-xl font-semibold mb-2">Tasks linked to this Milestone</h3>
+      <h3 className="text-xl font-semibold mb-2">Tasks linked to this Milestone</h3>
 
-	  {milestoneTasks.length === 0 ? (
-		<p className="text-sm text-gray-500">No tasks for this milestone yet.</p>
-	  ) : (
-		<div className="space-y-4">
-		  {groupedData.map(({ ideaRecord, tasks: tasksForIdea }) => {
-			const ideaTitle = ideaRecord?.fields?.IdeaTitle || "(Untitled Idea)";
-			const ideaCID = ideaRecord?.fields?.IdeaID;
+      {milestoneTasks.length === 0 ? (
+        <p className="text-sm text-gray-500">No tasks for this milestone yet.</p>
+      ) : (
+        <div className="space-y-4">
+          {groupedData.map(({ ideaRecord, tasks: tasksForIdea }) => {
+            const ideaTitle = ideaRecord?.fields?.IdeaTitle || "(Untitled Idea)";
+            const ideaCID = ideaRecord?.fields?.IdeaID;
 
-			return (
-			  <div key={ideaCID} className="p-3 border rounded">
-				{ideaRecord ? (
-				  <Link
-					to={`/ideas/${ideaCID}`}
-					className="text-blue-600 underline font-semibold"
-				  >
-					{ideaTitle}
-				  </Link>
-				) : (
-				  <strong>{ideaTitle}</strong>
-				)}
+            return (
+              <div key={ideaCID} className="p-3 border rounded">
+                {ideaRecord ? (
+                  <Link
+                    to={`/ideas/${ideaCID}`}
+                    className="text-blue-600 underline font-semibold"
+                  >
+                    {ideaTitle}
+                  </Link>
+                ) : (
+                  <strong>{ideaTitle}</strong>
+                )}
 
-				<ul className="mt-2 space-y-3">
-				  {tasksForIdea.map((task) => {
-					const isCompleted = task.fields.Completed || false;
-					const completedTime = task.fields.CompletedTime || null;
-					const isFocusToday = task.fields.Focus === "today";
+                <ul className="mt-2 space-y-3">
+                  {tasksForIdea.map((task) => {
+                    const isCompleted = task.fields.Completed || false;
+                    const completedTime = task.fields.CompletedTime || null;
+                    const isFocusToday = task.fields.Focus === "today";
 
-					const sortedSubs = getSubtasksFor(task);
+                    const sortedSubs = getSubtasksFor(task);
 
-					return (
-					  <li
-						key={task.id}
-						className="
-						  p-3 bg-white border rounded hover:bg-gray-50 transition
-						  group flex flex-col
-						"
-					  >
-						<div className="flex items-center">
-						  {/* Completed? */}
-						  <input
-							type="checkbox"
-							className="mr-2"
-							checked={isCompleted}
-							onChange={() => handleToggleCompleted(task)}
-						  />
+                    return (
+                      <li
+                        key={task.id}
+                        className="p-3 bg-white border rounded hover:bg-gray-50 transition group flex flex-col"
+                      >
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            className="mr-2"
+                            checked={isCompleted}
+                            onChange={() => handleToggleCompleted(task)}
+                          />
 
-						  {/* Task name */}
-						  <div className="flex-1">
-							<span
-							  className={
-								isCompleted ? "line-through text-gray-500" : ""
-							  }
-							>
-							  {task.fields.TaskName || "(Untitled Task)"}
-							</span>
-						  </div>
+                          <div className="flex-1">
+                            <span
+                              className={
+                                isCompleted ? "line-through text-gray-500" : ""
+                              }
+                            >
+                              {task.fields.TaskName || "(Untitled Task)"}
+                            </span>
+                          </div>
 
-						  {/* Dummy "Edit" link */}
-						  <a
-							href="#"
-							className="
-							  ml-4 text-xs text-blue-600 underline cursor-pointer
-							  hidden group-hover:inline-block
-							"
-						  >
-							Edit
-						  </a>
+                          <span
+                            className="ml-3 cursor-pointer text-xl"
+                            title="Toggle Focus"
+                            onClick={() => handleToggleFocus(task)}
+                          >
+                            {isFocusToday ? "☀️" : "💤"}
+                          </span>
+                        </div>
 
-						  {/* Focus emoji => toggle */}
-						  <span
-							className="ml-3 cursor-pointer text-xl"
-							title="Toggle Focus"
-							onClick={() => handleToggleFocus(task)}
-						  >
-							{isFocusToday ? "☀️" : "💤"}
-						  </span>
-						</div>
+                        {isCompleted && completedTime && (
+                          <p className="text-xs text-gray-500 ml-6 mt-1">
+                            Completed on {new Date(completedTime).toLocaleString()}
+                          </p>
+                        )}
 
-						{isCompleted && completedTime && (
-						  <p className="text-xs text-gray-500 ml-6 mt-1">
-							Completed on{" "}
-							{new Date(completedTime).toLocaleString()}
-						  </p>
-						)}
+                        {/* Subtasks */}
+                        {sortedSubs.length > 0 && (
+                          <ul className="mt-2 ml-6 border-l pl-3 border-gray-200 space-y-2">
+                            {sortedSubs.map((sub) => {
+                              const subCompleted = sub.fields.Completed || false;
+                              const subCT = sub.fields.CompletedTime || null;
+                              const subFocusToday = sub.fields.Focus === "today";
 
-						{/* Subtasks */}
-						{sortedSubs.length > 0 && (
-						  <ul className="mt-2 ml-6 border-l pl-3 border-gray-200 space-y-2">
-							{sortedSubs.map((sub) => {
-							  const subCompleted = sub.fields.Completed || false;
-							  const subCT = sub.fields.CompletedTime || null;
-							  const subFocusToday = sub.fields.Focus === "today";
+                              return (
+                                <li key={sub.id} className="py-2 pr-2 flex flex-col">
+                                  <div className="flex items-center">
+                                    <input
+                                      type="checkbox"
+                                      className="mr-2"
+                                      checked={subCompleted}
+                                      onChange={() => handleToggleCompleted(sub)}
+                                    />
+                                    <div className="flex-1">
+                                      <span
+                                        className={
+                                          subCompleted
+                                            ? "line-through text-gray-500"
+                                            : ""
+                                        }
+                                      >
+                                        {sub.fields.TaskName || "(Untitled Subtask)"}
+                                      </span>
+                                    </div>
 
-							  return (
-								<li key={sub.id} className="py-2 pr-2 flex flex-col">
-								  <div className="flex items-center">
-									<input
-									  type="checkbox"
-									  className="mr-2"
-									  checked={subCompleted}
-									  onChange={() => handleToggleCompleted(sub)}
-									/>
-									<div className="flex-1">
-									  <span
-										className={
-										  subCompleted
-											? "line-through text-gray-500"
-											: ""
-										}
-									  >
-										{sub.fields.TaskName ||
-										  "(Untitled Subtask)"}
-									  </span>
-									</div>
-
-									<span
-									  className="ml-3 cursor-pointer text-xl"
-									  title="Toggle Focus"
-									  onClick={() => handleToggleFocus(sub)}
-									>
-									  {subFocusToday ? "☀️" : "💤"}
-									</span>
-								  </div>
-								  {subCompleted && subCT && (
-									<p className="text-xs text-gray-500 ml-6 mt-1">
-									  Completed on{" "}
-									  {new Date(subCT).toLocaleString()}
-									</p>
-								  )}
-								</li>
-							  );
-							})}
-						  </ul>
-						)}
-					  </li>
-					);
-				  })}
-				</ul>
-			  </div>
-			);
-		  })}
-		</div>
-	  )}
-	</div>
+                                    <span
+                                      className="ml-3 cursor-pointer text-xl"
+                                      title="Toggle Focus"
+                                      onClick={() => handleToggleFocus(sub)}
+                                    >
+                                      {subFocusToday ? "☀️" : "💤"}
+                                    </span>
+                                  </div>
+                                  {subCompleted && subCT && (
+                                    <p className="text-xs text-gray-500 ml-6 mt-1">
+                                      Completed on {new Date(subCT).toLocaleString()}
+                                    </p>
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,15 +1,12 @@
-// File: big-idea/tailwind.config.js
-
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  // Enable class-based dark mode
+  darkMode: 'class',
   content: [
-    "./src/**/*.{js,jsx,ts,tsx}"
+    './src/**/*.{js,jsx,ts,tsx}',
+    './public/index.html',
   ],
   theme: {
-    container: {
-      center: true,
-      padding: "1rem", // or '2rem' if desired
-    },
     extend: {},
   },
   plugins: [],
