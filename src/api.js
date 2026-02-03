@@ -158,3 +158,19 @@ export async function deleteMilestone(id) {
     method: 'DELETE',
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function getAdminStatus(userId) {
+  const params = new URLSearchParams({ userId });
+  return request(`/api/admin/status?${params}`);
+}
+
+export async function switchDataSource(userId, dataSource) {
+  return request('/api/admin/data-source', {
+    method: 'POST',
+    body: { userId, dataSource },
+  });
+}

@@ -335,6 +335,7 @@ function formatUser(row) {
       Name: row.name,
       TodayTime: row.today_time,
       Goals: row.goals,
+      IsAdmin: row.is_admin || false,
     },
   };
 }

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(255),
   today_time VARCHAR(10) DEFAULT '16:20',
   goals TEXT DEFAULT '',
+  is_admin BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT NOW()
 );
 

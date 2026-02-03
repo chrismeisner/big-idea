@@ -14,8 +14,16 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Load data service (switches between Airtable and Postgres based on DATA_SOURCE env var)
-const dataService = require('./services');
+// Dynamic data source manager
+const dataSourceManager = require('./services/dataSourceManager');
+
+// Admin user ID (hardcoded for now - this user can switch data sources)
+const ADMIN_USER_ID = 'hJ0hdf3v9TwaXJ';
+
+// Helper to get current data service
+function getDataService() {
+  return dataSourceManager.getService();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API ROUTES
@@ -25,9 +33,70 @@ const dataService = require('./services');
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    dataSource: process.env.DATA_SOURCE || 'airtable',
+    dataSource: dataSourceManager.getCurrentDataSource(),
     timestamp: new Date().toISOString()
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Get admin status and data source info
+app.get('/api/admin/status', async (req, res) => {
+  try {
+    const { userId } = req.query;
+    
+    // Check if user is admin
+    const isAdmin = userId === ADMIN_USER_ID;
+    
+    res.json({
+      isAdmin,
+      currentDataSource: dataSourceManager.getCurrentDataSource(),
+      availableSources: {
+        airtable: dataSourceManager.isDataSourceAvailable('airtable'),
+        postgres: dataSourceManager.isDataSourceAvailable('postgres'),
+      },
+    });
+  } catch (err) {
+    console.error('[API] GET /api/admin/status error:', err);
+    res.status(500).json({ error: 'Failed to get admin status' });
+  }
+});
+
+// Switch data source (admin only)
+app.post('/api/admin/data-source', async (req, res) => {
+  try {
+    const { userId, dataSource } = req.body;
+    
+    // Check if user is admin
+    if (userId !== ADMIN_USER_ID) {
+      return res.status(403).json({ error: 'Unauthorized. Admin access required.' });
+    }
+    
+    if (!dataSource || (dataSource !== 'airtable' && dataSource !== 'postgres')) {
+      return res.status(400).json({ error: 'Invalid dataSource. Must be "airtable" or "postgres".' });
+    }
+    
+    // Check if the data source is available
+    if (!dataSourceManager.isDataSourceAvailable(dataSource)) {
+      return res.status(400).json({ 
+        error: `Data source "${dataSource}" is not configured. Missing environment variables.` 
+      });
+    }
+    
+    // Switch data source
+    const newSource = dataSourceManager.setDataSource(dataSource);
+    
+    res.json({
+      success: true,
+      currentDataSource: newSource,
+      message: `Switched to ${newSource}`,
+    });
+  } catch (err) {
+    console.error('[API] POST /api/admin/data-source error:', err);
+    res.status(500).json({ error: err.message || 'Failed to switch data source' });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,10 +111,16 @@ app.post('/api/users/auth', async (req, res) => {
       return res.status(400).json({ error: 'phoneNumber is required' });
     }
 
+    const dataService = getDataService();
     let user = await dataService.getUserByPhone(phoneNumber);
     
     if (!user) {
       user = await dataService.createUser({ mobile: phoneNumber });
+    }
+    
+    // Add isAdmin flag based on user ID
+    if (user.fields.UserID === ADMIN_USER_ID) {
+      user.fields.IsAdmin = true;
     }
 
     res.json(user);
@@ -59,6 +134,7 @@ app.post('/api/users/auth', async (req, res) => {
 app.patch('/api/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     const user = await dataService.updateUser(id, req.body);
     res.json(user);
   } catch (err) {
@@ -79,6 +155,7 @@ app.get('/api/ideas', async (req, res) => {
       return res.status(400).json({ error: 'userId is required' });
     }
 
+    const dataService = getDataService();
     const ideas = await dataService.getIdeas(userId);
     res.json({ records: ideas });
   } catch (err) {
@@ -91,6 +168,7 @@ app.get('/api/ideas', async (req, res) => {
 app.get('/api/ideas/:customIdeaId', async (req, res) => {
   try {
     const { customIdeaId } = req.params;
+    const dataService = getDataService();
     const idea = await dataService.getIdeaByCustomId(customIdeaId);
     
     if (!idea) {
@@ -107,6 +185,7 @@ app.get('/api/ideas/:customIdeaId', async (req, res) => {
 // Create idea
 app.post('/api/ideas', async (req, res) => {
   try {
+    const dataService = getDataService();
     const idea = await dataService.createIdea(req.body);
     res.json(idea);
   } catch (err) {
@@ -119,6 +198,7 @@ app.post('/api/ideas', async (req, res) => {
 app.patch('/api/ideas/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     const idea = await dataService.updateIdea(id, req.body);
     res.json(idea);
   } catch (err) {
@@ -130,7 +210,8 @@ app.patch('/api/ideas/:id', async (req, res) => {
 // Batch update ideas order
 app.patch('/api/ideas/batch/order', async (req, res) => {
   try {
-    const { updates } = req.body; // [{ id, order }, ...]
+    const { updates } = req.body;
+    const dataService = getDataService();
     await dataService.updateIdeasOrder(updates);
     res.json({ success: true });
   } catch (err) {
@@ -143,6 +224,7 @@ app.patch('/api/ideas/batch/order', async (req, res) => {
 app.delete('/api/ideas/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     await dataService.deleteIdea(id);
     res.json({ success: true });
   } catch (err) {
@@ -168,6 +250,7 @@ app.get('/api/tasks', async (req, res) => {
     if (focus) filters.focus = focus;
     if (sortField) filters.sortField = sortField;
 
+    const dataService = getDataService();
     const tasks = await dataService.getTasks(userId, filters);
     res.json({ records: tasks });
   } catch (err) {
@@ -179,6 +262,7 @@ app.get('/api/tasks', async (req, res) => {
 // Create task
 app.post('/api/tasks', async (req, res) => {
   try {
+    const dataService = getDataService();
     const task = await dataService.createTask(req.body);
     res.json(task);
   } catch (err) {
@@ -191,6 +275,7 @@ app.post('/api/tasks', async (req, res) => {
 app.patch('/api/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     const task = await dataService.updateTask(id, req.body);
     res.json(task);
   } catch (err) {
@@ -202,7 +287,8 @@ app.patch('/api/tasks/:id', async (req, res) => {
 // Batch update tasks order
 app.patch('/api/tasks/batch/order', async (req, res) => {
   try {
-    const { updates, field } = req.body; // [{ id, order }, ...], field = 'Order' | 'SubOrder' | 'OrderToday'
+    const { updates, field } = req.body;
+    const dataService = getDataService();
     await dataService.updateTasksOrder(updates, field);
     res.json({ success: true });
   } catch (err) {
@@ -215,6 +301,7 @@ app.patch('/api/tasks/batch/order', async (req, res) => {
 app.delete('/api/tasks/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     await dataService.deleteTask(id);
     res.json({ success: true });
   } catch (err) {
@@ -235,6 +322,7 @@ app.get('/api/milestones', async (req, res) => {
       return res.status(400).json({ error: 'userId is required' });
     }
 
+    const dataService = getDataService();
     const milestones = await dataService.getMilestones(userId);
     res.json({ records: milestones });
   } catch (err) {
@@ -247,6 +335,7 @@ app.get('/api/milestones', async (req, res) => {
 app.get('/api/milestones/:customMilestoneId', async (req, res) => {
   try {
     const { customMilestoneId } = req.params;
+    const dataService = getDataService();
     const milestone = await dataService.getMilestoneByCustomId(customMilestoneId);
     
     if (!milestone) {
@@ -263,6 +352,7 @@ app.get('/api/milestones/:customMilestoneId', async (req, res) => {
 // Create milestone
 app.post('/api/milestones', async (req, res) => {
   try {
+    const dataService = getDataService();
     const milestone = await dataService.createMilestone(req.body);
     res.json(milestone);
   } catch (err) {
@@ -275,6 +365,7 @@ app.post('/api/milestones', async (req, res) => {
 app.patch('/api/milestones/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     const milestone = await dataService.updateMilestone(id, req.body);
     res.json(milestone);
   } catch (err) {
@@ -287,6 +378,7 @@ app.patch('/api/milestones/:id', async (req, res) => {
 app.delete('/api/milestones/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const dataService = getDataService();
     await dataService.deleteMilestone(id);
     res.json({ success: true });
   } catch (err) {
@@ -315,7 +407,7 @@ if (process.env.NODE_ENV === 'production') {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Data source: ${process.env.DATA_SOURCE || 'airtable'}`);
+  console.log(`Data source: ${dataSourceManager.getCurrentDataSource()}`);
   if (process.env.NODE_ENV === 'production') {
     console.log('Serving static files from build/');
   }
