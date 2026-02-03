@@ -5,12 +5,13 @@ const dataSource = process.env.DATA_SOURCE || 'airtable';
 
 let service;
 
+// Only require the service that's actually needed
 if (dataSource === 'postgres') {
-  service = require('./postgres');
   console.log('[DataSource] Using PostgreSQL');
+  service = require('./postgres');
 } else {
-  service = require('./airtable');
   console.log('[DataSource] Using Airtable');
+  service = require('./airtable');
 }
 
 module.exports = service;

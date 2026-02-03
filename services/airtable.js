@@ -3,9 +3,22 @@
 
 const Airtable = require('airtable');
 
-const base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(
-  process.env.AIRTABLE_BASE_ID
-);
+// Lazy initialization - only create base when first used
+let _base = null;
+function getBase() {
+  if (!_base) {
+    if (!process.env.AIRTABLE_API_KEY || !process.env.AIRTABLE_BASE_ID) {
+      throw new Error('Airtable credentials not configured. Set AIRTABLE_API_KEY and AIRTABLE_BASE_ID.');
+    }
+    _base = new Airtable({ apiKey: process.env.AIRTABLE_API_KEY }).base(
+      process.env.AIRTABLE_BASE_ID
+    );
+  }
+  return _base;
+}
+
+// Helper to get base - use this instead of direct `base` reference
+const base = (tableName) => getBase()(tableName);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // USERS
