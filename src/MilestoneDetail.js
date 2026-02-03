@@ -1,7 +1,8 @@
 // File: /src/MilestoneDetail.js
 
 import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { PencilIcon, TrashIcon } from "@heroicons/react/24/outline";
 import * as api from "./api";
 
 function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
@@ -27,6 +28,7 @@ function MilestoneProgressBar({ completedTasks, totalTasks, percentage }) {
 
 function MilestoneDetail({ airtableUser }) {
   const { milestoneCustomId } = useParams();
+  const navigate = useNavigate();
   const [milestone, setMilestone] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [ideas, setIdeas] = useState([]);
@@ -36,6 +38,19 @@ function MilestoneDetail({ airtableUser }) {
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingName, setEditingName] = useState("");
+
+  // Edit modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    dateTime: "",
+    notes: "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  // Delete confirmation
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Countdown
   const [countdown, setCountdown] = useState("");
@@ -200,6 +215,79 @@ function MilestoneDetail({ airtableUser }) {
     }
   };
 
+  // Edit Modal functions
+  const openEditModal = () => {
+    setEditForm({
+      name: milestone?.fields?.MilestoneName || "",
+      dateTime: formatForDateTimeLocal(milestone?.fields?.MilestoneTime),
+      notes: milestone?.fields?.MilestoneNotes || "",
+    });
+    setShowEditModal(true);
+  };
+
+  const closeEditModal = () => {
+    setShowEditModal(false);
+    setEditForm({ name: "", dateTime: "", notes: "" });
+  };
+
+  const handleEditFormChange = (field, value) => {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveEdit = async () => {
+    const trimmedName = editForm.name.trim();
+    if (!trimmedName) {
+      setError("Milestone name is required.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const newDateISO = editForm.dateTime ? new Date(editForm.dateTime).toISOString() : null;
+
+      // Optimistic update
+      setMilestone((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          fields: {
+            ...prev.fields,
+            MilestoneName: trimmedName,
+            MilestoneTime: newDateISO || "",
+            MilestoneNotes: editForm.notes,
+          },
+        };
+      });
+
+      await api.updateMilestone(milestone.id, {
+        milestoneName: trimmedName,
+        milestoneTime: newDateISO || "",
+        milestoneNotes: editForm.notes,
+      });
+
+      closeEditModal();
+    } catch (err) {
+      console.error("Error updating milestone:", err);
+      setError("Failed to update milestone. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Delete milestone
+  const handleDeleteMilestone = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteMilestone(milestone.id);
+      navigate("/milestones");
+    } catch (err) {
+      console.error("Error deleting milestone:", err);
+      setError("Failed to delete milestone. Please try again.");
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   // Toggling Focus or Completed for tasks
   const handleToggleFocus = async (task) => {
     const wasFocusToday = task.fields.Focus === "today";
@@ -355,7 +443,105 @@ function MilestoneDetail({ airtableUser }) {
         &larr; Back to Milestones
       </Link>
 
-      {/* DATE MODAL OVERLAY */}
+      {/* EDIT MODAL */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md mx-4">
+            <h2 className="text-xl font-semibold mb-4">Edit Milestone</h2>
+            
+            <div className="space-y-4">
+              {/* Name */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  className="border border-gray-300 p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  value={editForm.name}
+                  onChange={(e) => handleEditFormChange("name", e.target.value)}
+                  placeholder="Milestone name"
+                />
+              </div>
+
+              {/* Due Date */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Due Date & Time
+                </label>
+                <input
+                  type="datetime-local"
+                  className="border border-gray-300 p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  value={editForm.dateTime}
+                  onChange={(e) => handleEditFormChange("dateTime", e.target.value)}
+                />
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  className="border border-gray-300 p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  rows={4}
+                  value={editForm.notes}
+                  onChange={(e) => handleEditFormChange("notes", e.target.value)}
+                  placeholder="Add notes about this milestone..."
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end mt-6 space-x-2">
+              <button
+                onClick={closeEditModal}
+                disabled={saving}
+                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-sm mx-4">
+            <h2 className="text-xl font-semibold mb-2">Delete Milestone?</h2>
+            <p className="text-gray-600 mb-4">
+              Are you sure you want to delete "{MilestoneName}"? This action cannot be undone.
+              Tasks linked to this milestone will not be deleted.
+            </p>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteMilestone}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DATE MODAL OVERLAY (legacy - keeping for quick date edits) */}
       {showDateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white p-4 rounded shadow-md w-80">
@@ -384,31 +570,53 @@ function MilestoneDetail({ airtableUser }) {
         </div>
       )}
 
-      <div className="mt-4">
-        {!isEditingTitle ? (
-          <h2
-            className="text-2xl font-bold cursor-pointer"
-            onClick={startEditingTitle}
+      {/* HEADER WITH EDIT/DELETE BUTTONS */}
+      <div className="mt-4 flex items-start justify-between">
+        <div className="flex-1">
+          {!isEditingTitle ? (
+            <h2
+              className="text-2xl font-bold cursor-pointer hover:text-gray-700"
+              onClick={startEditingTitle}
+              title="Click to edit title"
+            >
+              {MilestoneName || "(Untitled Milestone)"}
+            </h2>
+          ) : (
+            <input
+              type="text"
+              className="text-2xl font-bold border-b border-gray-300 focus:outline-none w-full"
+              value={editingName}
+              onChange={(e) => setEditingName(e.target.value)}
+              onBlur={handleTitleSave}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleTitleSave();
+                } else if (e.key === "Escape") {
+                  cancelEditingTitle();
+                }
+              }}
+              autoFocus
+            />
+          )}
+        </div>
+
+        {/* Edit & Delete Buttons */}
+        <div className="flex items-center space-x-2 ml-4">
+          <button
+            onClick={openEditModal}
+            className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+            title="Edit Milestone"
           >
-            {MilestoneName || "(Untitled Milestone)"}
-          </h2>
-        ) : (
-          <input
-            type="text"
-            className="text-2xl font-bold border-b border-gray-300 focus:outline-none"
-            value={editingName}
-            onChange={(e) => setEditingName(e.target.value)}
-            onBlur={handleTitleSave}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                handleTitleSave();
-              } else if (e.key === "Escape") {
-                cancelEditingTitle();
-              }
-            }}
-            autoFocus
-          />
-        )}
+            <PencilIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+            title="Delete Milestone"
+          >
+            <TrashIcon className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {formattedDue && (
@@ -419,10 +627,26 @@ function MilestoneDetail({ airtableUser }) {
           Due: {formattedDue}
         </p>
       )}
+      {!formattedDue && (
+        <p
+          className="text-sm text-gray-400 mt-1 cursor-pointer hover:text-gray-600"
+          onClick={openEditModal}
+        >
+          + Add due date
+        </p>
+      )}
       {countdown && <p className="text-lg font-medium text-red-600 mt-2">{countdown}</p>}
 
       {MilestoneNotes && (
-        <p className="mt-2 whitespace-pre-line">{MilestoneNotes}</p>
+        <p className="mt-2 whitespace-pre-line text-gray-700">{MilestoneNotes}</p>
+      )}
+      {!MilestoneNotes && (
+        <p
+          className="mt-2 text-sm text-gray-400 cursor-pointer hover:text-gray-600"
+          onClick={openEditModal}
+        >
+          + Add notes
+        </p>
       )}
 
       <hr className="my-4" />
